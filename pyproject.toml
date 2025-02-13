@@ -1,0 +1,28 @@
+[project]
+name = "bubbles"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Jeffrey Rosenbluth", email = "jeffrey.rosenbluth@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.2.2",
+    "polars>=1.22.0",
+]
+
+[project.scripts]
+bubbles = "bubbles:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+]
+lint = [
+    "ruff>=0.9.6",
+]
