@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -35,6 +35,26 @@ class Market:
     payout_ratio: float = 0.5
 
 
+def return_weights(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
+    ws = [start_weight * (0.75**i) for i in range(n)]
+    s = sum(ws)
+    return np.array([w / s for w in ws])
+
+
+def weighted_avg_returns(return_idx: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    n = len(return_idx)
+    weighted_avg_returns = np.full((n,), np.nan, dtype=float)
+    for t in range(61, n):
+        indices = [t - i * 12 - 1 for i in range(len(weights) + 1)]
+        returns_slice = return_idx[indices]
+        weighted_avg_returns[t] = 0
+        for i in range(len(weights)):
+            weighted_avg_returns[t] += weights[i] * (
+                returns_slice[i] / returns_slice[i + 1] - 1
+            )
+    return weighted_avg_returns
+
+
 @dataclass
 class Investors:
     percent_y: float = 0.5
@@ -43,11 +63,7 @@ class Investors:
     gamma_x: float = 3.0
     sigma_y: float = 0.16
     sigma_x: float = 0.16
-
-
-def return_weights(start_weight: float = 36, n: int = 5) -> List[float]:
-    w = [start_weight * (0.75**i) for i in range(n)]
-    return w / sum(w)
+    return_weights_x: np.ndarray = field(default_factory=return_weights)
 
 
 def data_table(
@@ -56,7 +72,7 @@ def data_table(
     payout_ratio: float,
     earnings_vol: float,
     history_length: int,
-    # investors: Investors,
+    investors: Investors,
 ) -> pl.DataFrame:
     monthly_earnings = np.full((months + 1,), np.nan, dtype=float)
     monthly_earnings[1] = (1 + r0) ** (1 / 12) - 1
@@ -74,12 +90,8 @@ def data_table(
 
     history_months = 12 * history_length
 
-    total_cash = np.full((months + 1,), np.nan, dtype=float)
-    total_cash[history_months] = (
-        price[history_months] + monthly_earnings[history_months] - reinvested
-    )
     z = dz.copy()
-    z[:history_months] = 0
+    z[: history_months + 1] = 0
 
     for t in range(2, months):
         monthly_earnings[t] = (
@@ -97,30 +109,43 @@ def data_table(
             * (price[t] + monthly_earnings[t] - reinvested)
             / price[t - 1]
         )
+    n_year_annualized_return = weighted_avg_returns(
+        stock_total_return_idx, return_weights()
+    )
+
+    merton_share_y = (
+        annualized_earnings[history_months]
+        / price[history_months]
+        / (investors.gamma_y * investors.sigma_y * investors.sigma_y)
+    )
+    merton_share_x = (
+        annualized_earnings[history_months]
+        / price[history_months]
+        / (investors.gamma_x * investors.sigma_x * investors.sigma_x)
+    )
+
+    total_cash = np.full((months + 1,), np.nan, dtype=float)
+    total_cash[history_months] = (
+        price[history_months]
+        / (investors.percent_y * merton_share_y + investors.percent_x * merton_share_x)
+        - price[history_months]
+    )
+    for t in range(history_months + 1, months):
+        total_cash[t] = total_cash[t - 1] + monthly_earnings[t] * payout_ratio
+
+    expected_return_y = annualized_earnings / price
+
     return pl.DataFrame(
         {
             "monthly_earnings": monthly_earnings,
             "stock_price_idx": price,
             "annualized_earnings": annualized_earnings,
             "stock_total_return_idx": stock_total_return_idx,
+            "total_cash": total_cash,
+            "n_year_annualized_return": n_year_annualized_return,
+            "expected_return_y": expected_return_y,
         }
     )
-
-
-def annual_returns(returns: np.ndarray) -> np.ndarray:
-    return (
-        np.array([np.prod(1 + returns[i - 12 : i]) for i in range(12, len(returns))])
-        - 1
-    )
-
-
-def annual_returns_slice(returns: np.ndarray, m: int, gap: int) -> np.ndarray:
-    returns = annual_returns(returns)
-    last_idx = len(returns) - 1
-    start_idx = last_idx - (m - 1) * gap
-    indices = np.arange(start_idx, last_idx + 1, gap)
-    print(indices)
-    return np.clip(indices, 0, last_idx)
 
 
 def returns_ex(m: Model, annual_returns: np.ndarray, psi: list) -> float:
