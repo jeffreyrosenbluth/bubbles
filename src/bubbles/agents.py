@@ -4,6 +4,10 @@ from typing import Dict, List, Optional
 import numpy as np
 import polars as pl
 
+from bubbles.dz import dz
+
+SQRT_12 = np.sqrt(12)
+
 
 @dataclass
 class Model:
@@ -24,20 +28,81 @@ class Model:
     squeezing: float
 
 
-def earnings(months: int, r0: float, payout_ratio: float) -> pl.DataFrame:
+@dataclass
+class Market:
+    initial_expected_return: float = 0.04
+    earnings_vol: float = 0.10
+    payout_ratio: float = 0.5
+
+
+@dataclass
+class Investors:
+    percent_y: float = 0.5
+    percent_x: float = 1 - percent_y
+    gamma_y: float = 3.0
+    gamma_x: float = 3.0
+    sigma_y: float = 0.16
+    sigma_x: float = 0.16
+
+
+def return_weights(start_weight: float = 36, n: int = 5) -> List[float]:
+    w = [start_weight * (0.75**i) for i in range(n)]
+    return w / sum(w)
+
+
+def data_table(
+    months: int,
+    r0: float,
+    payout_ratio: float,
+    earnings_vol: float,
+    history_length: int,
+    # investors: Investors,
+) -> pl.DataFrame:
     monthly_earnings = np.full((months + 1,), np.nan, dtype=float)
     monthly_earnings[1] = (1 + r0) ** (1 / 12) - 1
     reinvested = monthly_earnings[1] * (1 - payout_ratio)
     price = np.ones(months + 1)
     price[1] = price[0] + reinvested
+    annualized_earnings = np.full((months + 1,), np.nan, dtype=float)
+    annualized_earnings[1] = ((1 + monthly_earnings[1] / price[0]) ** 12 - 1) * price[0]
+    stock_total_return_idx = np.ones(months + 1)
+    stock_total_return_idx[1] = (
+        stock_total_return_idx[0]
+        * (price[1] + monthly_earnings[1] - reinvested)
+        / price[0]
+    )
+
+    history_months = 12 * history_length
+
+    total_cash = np.full((months + 1,), np.nan, dtype=float)
+    total_cash[history_months] = (
+        price[history_months] + monthly_earnings[history_months] - reinvested
+    )
+    z = dz.copy()
+    z[:history_months] = 0
+
     for t in range(2, months):
-        monthly_earnings[t] = monthly_earnings[t - 1] * (1 + reinvested / price[t - 1])
+        monthly_earnings[t] = (
+            monthly_earnings[t - 1]
+            * (1 + reinvested / price[t - 1])
+            * (1 + z[t] * earnings_vol / SQRT_12)
+        )
         reinvested = monthly_earnings[t] * (1 - payout_ratio)
+        annualized_earnings[t] = (
+            (1 + monthly_earnings[t] / price[t - 1]) ** 12 - 1
+        ) * price[t - 1]
         price[t] = price[t - 1] + reinvested
+        stock_total_return_idx[t] = (
+            stock_total_return_idx[t - 1]
+            * (price[t] + monthly_earnings[t] - reinvested)
+            / price[t - 1]
+        )
     return pl.DataFrame(
         {
             "monthly_earnings": monthly_earnings,
             "stock_price_idx": price,
+            "annualized_earnings": annualized_earnings,
+            "stock_total_return_idx": stock_total_return_idx,
         }
     )
 
@@ -321,4 +386,5 @@ def quad(params: Parameters, df: pl.DataFrame) -> pl.DataFrame:
     root2 = (-b - np.sqrt(discriminant)) / (2 * a)
     positive_roots = np.where(root1 > 0, root1, root2)
 
+    return df.with_columns(pl.Series(name="positive_root", values=positive_roots))
     return df.with_columns(pl.Series(name="positive_root", values=positive_roots))
