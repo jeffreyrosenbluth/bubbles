@@ -64,6 +64,21 @@ class Investors:
     sigma_y: float = 0.16
     sigma_x: float = 0.16
     return_weights_x: np.ndarray = field(default_factory=return_weights)
+    speed_of_adjustment: float = 0.1
+
+
+@dataclass
+class Squeeze:
+    squeeze_target: float = 0.04
+    max_deviation: float = 0.04
+    squeezing: float = 0.1
+
+
+def quadratic(a: float, b: float, c: float) -> float:
+    discriminant = b**2 - 4 * a * c
+    root1 = (-b + np.sqrt(discriminant)) / (2 * a)
+    root2 = (-b - np.sqrt(discriminant)) / (2 * a)
+    return np.where(root1 > 0, root1, root2)
 
 
 def data_table(
@@ -73,68 +88,160 @@ def data_table(
     earnings_vol: float,
     history_length: int,
     investors: Investors,
+    squeeze_params: Squeeze,
 ) -> pl.DataFrame:
-    monthly_earnings = np.full((months + 1,), np.nan, dtype=float)
-    monthly_earnings[1] = (1 + r0) ** (1 / 12) - 1
-    reinvested = monthly_earnings[1] * (1 - payout_ratio)
-    price = np.ones(months + 1)
-    price[1] = price[0] + reinvested
-    annualized_earnings = np.full((months + 1,), np.nan, dtype=float)
-    annualized_earnings[1] = ((1 + monthly_earnings[1] / price[0]) ** 12 - 1) * price[0]
-    stock_total_return_idx = np.ones(months + 1)
-    stock_total_return_idx[1] = (
-        stock_total_return_idx[0]
-        * (price[1] + monthly_earnings[1] - reinvested)
-        / price[0]
-    )
+    """Simulates stock price, earnings, reinvestment, and returns over a given period."""
 
+    SQRT_12 = np.sqrt(12)
     history_months = 12 * history_length
 
+    monthly_earnings = np.full(months + 1, np.nan, dtype=float)
+    price = np.ones(months + 1)
+    annualized_earnings = np.full(months + 1, np.nan, dtype=float)
+    stock_total_return_idx = np.ones(months + 1)
+    total_cash = np.full(months + 1, np.nan, dtype=float)
+    expected_return_x = np.full(months + 1, np.nan, dtype=float)
+    squeeze = np.full(months + 1, np.nan, dtype=float)
+    wealth_x = np.full(months + 1, np.nan, dtype=float)
+    wealth_y = np.full(months + 1, np.nan, dtype=float)
+    equity_x = np.full(months + 1, np.nan, dtype=float)
+    equity_y = np.full(months + 1, np.nan, dtype=float)
+    cash_x = np.full(months + 1, np.nan, dtype=float)
+    cash_y = np.full(months + 1, np.nan, dtype=float)
+    cash_post_distribution_x = np.full(months + 1, np.nan, dtype=float)
+    cash_post_distribution_y = np.full(months + 1, np.nan, dtype=float)
+    a = np.full(months + 1, np.nan, dtype=float)
+    b = np.full(months + 1, np.nan, dtype=float)
+    c = np.full(months + 1, np.nan, dtype=float)
+
+    # Initial conditions
+    monthly_earnings[1] = (1 + r0) ** (1 / 12) - 1
+    reinvested = monthly_earnings[1] * (1 - payout_ratio)
+    price[1] = price[0] + reinvested
+    annualized_earnings[1] = ((1 + monthly_earnings[1] / price[0]) ** 12 - 1) * price[0]
+    stock_total_return_idx[1] = stock_total_return_idx[0] * (
+        (price[1] + monthly_earnings[1] - reinvested) / price[0]
+    )
+
+    # Noise initialization
     z = dz.copy()
-    z[: history_months + 1] = 0
+    z[: history_months + 1] = 0  # Zero-out initial noise
 
     for t in range(2, months):
-        monthly_earnings[t] = (
-            monthly_earnings[t - 1]
-            * (1 + reinvested / price[t - 1])
-            * (1 + z[t] * earnings_vol / SQRT_12)
+        growth_factor = (1 + reinvested / price[t - 1]) * (
+            1 + z[t] * earnings_vol / SQRT_12
         )
+        monthly_earnings[t] = monthly_earnings[t - 1] * growth_factor
         reinvested = monthly_earnings[t] * (1 - payout_ratio)
+
+        price[t] = price[t - 1] + reinvested
         annualized_earnings[t] = (
             (1 + monthly_earnings[t] / price[t - 1]) ** 12 - 1
         ) * price[t - 1]
-        price[t] = price[t - 1] + reinvested
-        stock_total_return_idx[t] = (
-            stock_total_return_idx[t - 1]
-            * (price[t] + monthly_earnings[t] - reinvested)
-            / price[t - 1]
+        stock_total_return_idx[t] = stock_total_return_idx[t - 1] * (
+            (price[t] + monthly_earnings[t] - reinvested) / price[t - 1]
         )
+
+    expected_return_y = annualized_earnings / price
     n_year_annualized_return = weighted_avg_returns(
         stock_total_return_idx, return_weights()
     )
+    n_year_annualized_return[history_months] = expected_return_y[history_months]
 
+    # Merton shares
     merton_share_y = (
         annualized_earnings[history_months]
         / price[history_months]
-        / (investors.gamma_y * investors.sigma_y * investors.sigma_y)
+        / (investors.gamma_y * investors.sigma_y**2)
     )
     merton_share_x = (
         annualized_earnings[history_months]
         / price[history_months]
-        / (investors.gamma_x * investors.sigma_x * investors.sigma_x)
+        / (investors.gamma_x * investors.sigma_x**2)
     )
 
-    total_cash = np.full((months + 1,), np.nan, dtype=float)
-    total_cash[history_months] = (
-        price[history_months]
-        / (investors.percent_y * merton_share_y + investors.percent_x * merton_share_x)
-        - price[history_months]
+    starting_wealth = price[history_months] / (
+        investors.percent_y * merton_share_y + investors.percent_x * merton_share_x
     )
+
+    total_cash[history_months] = starting_wealth - price[history_months]
+    expected_return_x[history_months] = expected_return_y[history_months]
+    wealth_x[history_months] = investors.percent_x * starting_wealth
+    wealth_y[history_months] = investors.percent_y * starting_wealth
+    equity_x[history_months] = (
+        wealth_x[history_months]
+        * expected_return_x[history_months]
+        / (investors.gamma_x * investors.sigma_x**2)
+    )
+    equity_y[history_months] = (
+        wealth_y[history_months]
+        * expected_return_y[history_months]
+        / (investors.gamma_y * investors.sigma_y**2)
+    )
+    cash_x[history_months] = wealth_x[history_months] - equity_x[history_months]
+    cash_y[history_months] = wealth_y[history_months] - equity_y[history_months]
+
     for t in range(history_months + 1, months):
         total_cash[t] = total_cash[t - 1] + monthly_earnings[t] * payout_ratio
-
-    expected_return_y = annualized_earnings / price
-
+        squeeze[t] = (
+            squeeze_params.squeeze_target
+            + squeeze_params.max_deviation
+            * np.tanh((n_year_annualized_return[t] - r0) / squeeze_params.squeezing)
+        )
+        expected_return_x[t] = (
+            squeeze[t] * investors.speed_of_adjustment
+            + (1 - investors.speed_of_adjustment) * expected_return_x[t - 1]
+        )
+        wealth_x[t] = (
+            cash_x[t - 1]
+            + equity_x[t - 1]
+            * stock_total_return_idx[t]
+            / stock_total_return_idx[t - 1]
+        )
+        wealth_y[t] = (
+            cash_y[t - 1]
+            + equity_y[t - 1]
+            * stock_total_return_idx[t]
+            / stock_total_return_idx[t - 1]
+        )
+        equity_x[t] = (
+            wealth_x[t]
+            * expected_return_x[t]
+            / (investors.gamma_x * investors.sigma_x**2)
+        )
+        equity_y[t] = (
+            wealth_y[t]
+            * expected_return_y[t]
+            / (investors.gamma_y * investors.sigma_y**2)
+        )
+        cash_x[t] = wealth_x[t] - equity_x[t]
+        cash_y[t] = wealth_y[t] - equity_y[t]
+        cash_post_distribution_x[t] = (
+            cash_x[t - 1]
+            + (monthly_earnings[t] * payout_ratio) * equity_x[t - 1] / price[t - 1]
+        )
+        cash_post_distribution_y[t] = (
+            cash_y[t - 1]
+            + (monthly_earnings[t] * payout_ratio) * equity_y[t - 1] / price[t - 1]
+        )
+        a[t] = (
+            expected_return_x[t]
+            * equity_x[t - 1]
+            / (price[t - 1] * investors.gamma_x * investors.sigma_x**2)
+            - 1
+        )
+        b[t] = annualized_earnings[t] * equity_y[t - 1] / (
+            price[t - 1] * investors.gamma_y * investors.sigma_y**2
+        ) + expected_return_x[t] * cash_post_distribution_x[t] / (
+            investors.gamma_x * investors.sigma_x**2
+        )
+        c[t] = (
+            annualized_earnings[t]
+            * cash_post_distribution_y[t]
+            / (investors.gamma_y * investors.sigma_y**2)
+        )
+        price[t] = quadratic(a[t], b[t], c[t])
+    # Return results as a Polars DataFrame
     return pl.DataFrame(
         {
             "monthly_earnings": monthly_earnings,
@@ -144,6 +251,18 @@ def data_table(
             "total_cash": total_cash,
             "n_year_annualized_return": n_year_annualized_return,
             "expected_return_y": expected_return_y,
+            "expected_return_x": expected_return_x,
+            "wealth_x": wealth_x,
+            "wealth_y": wealth_y,
+            "equity_x": equity_x,
+            "equity_y": equity_y,
+            "cash_x": cash_x,
+            "cash_y": cash_y,
+            "cash_post_distribution_x": cash_post_distribution_x,
+            "cash_post_distribution_y": cash_post_distribution_y,
+            "a": a,
+            "b": b,
+            "c": c,
         }
     )
 
@@ -188,36 +307,6 @@ def wealth(price: float, shares: float, cash: float) -> float:
     return cash + price * shares
 
 
-reference = {
-    "month": "B",
-    "monthly_earnings": "D",
-    "annualized_earnings": "C, E(t)",
-    "monthly_distributed": "E",
-    "reinvested": "F",
-    "stock_total_return_idx": "G",
-    "stock_price_idx": "H, P(t)",
-    "total_cash": "I",
-    "expected_lt_return": "J",
-    "expected_return_lookback": "K",
-    "weighted_avg_return_lookback": "L",
-    "simple_squeeze": "M",
-    "squeeze": "N",
-    "asset_alloc_return_ex": "O",
-    "wealth_lt": "P, W_l(t)",
-    "wealth_ex": "Q, W_x(t)",
-    "equity_lt": "R, N_l(t)",
-    "equity_ex": "S, N_x(t)",
-    "equity_total": "T",
-    "cash_lt": "U, C_l(t)",
-    "cash_ex": "V, C_x(t)",
-    "kappa_lt": "W",
-    "kappa_ex": "X",
-    "cash_after_distribution_lt": "Y",
-    "cash_after_distribution_ex": "Z",
-    "dz": "AI",
-}
-
-
 @dataclass
 class Parameters:
     years: int = 50
@@ -245,121 +334,6 @@ class Parameters:
     squeezing: float = 0.1
 
 
-def lookback_table(params: Parameters) -> pl.DataFrame:
-    months = params.lookback_years * 12 + 1
-    monthly_earnings = np.full((months,), np.nan, dtype=float)
-    annualized_earnings = np.full((months,), np.nan, dtype=float)
-    monthly_distributed = np.full((months,), np.nan, dtype=float)
-    reinvested = np.full((months,), np.nan, dtype=float)
-    stock_total_return_idx = np.ones(months)
-    stock_price_idx = np.ones(months)
-    dz = np.zeros(months)
-
-    monthly_earnings[0] = params.initial_monthly_return
-    reinvested[0] = monthly_earnings[0] * (1 - params.payout_ratio)
-    monthly_distributed[0] = monthly_earnings[0] * params.payout_ratio
-
-    for t in range(1, months):
-        # # if t == 1:
-        # #     monthly_earnings[t] = params.initial_monthly_return
-        # else:
-        monthly_earnings[t] = (
-            monthly_earnings[t - 1]
-            * (1 + reinvested[t - 1] / stock_price_idx[t - 1])
-            * (1 + dz[t] * params.monthly_vol)
-        )
-        monthly_distributed[t] = monthly_earnings[t] * params.payout_ratio
-        reinvested[t] = monthly_earnings[t] - monthly_distributed[t]
-        stock_price_idx[t] = stock_price_idx[t - 1] + reinvested[t]
-        stock_total_return_idx[t] = (
-            stock_total_return_idx[t - 1]
-            * (stock_price_idx[t] + monthly_distributed[t])
-            / stock_price_idx[t - 1]
-        )
-        annualized_earnings[t] = (
-            ((1 + monthly_earnings[t] / stock_price_idx[t - 1]) ** 12 - 1)
-        ) * stock_price_idx[t - 1]
-
-    monthly_earnings = np.insert(monthly_earnings, 0, np.nan)[:-1]
-    reinvested = np.insert(reinvested, 0, np.nan)[:-1]
-    monthly_distributed = np.insert(monthly_distributed, 0, np.nan)[:-1]
-    expected_lt_return = annualized_earnings[1:] / stock_price_idx[:-1]
-    expected_lt_return = np.insert(expected_lt_return, 0, np.nan)
-
-    df = pl.DataFrame(
-        {
-            "month": np.arange(months),
-            "monthly_earnings": monthly_earnings,
-            "annualized_earnings": annualized_earnings,
-            "monthly_distributed": monthly_distributed,
-            "reinvested": reinvested,
-            "stock_total_return_idx": stock_total_return_idx,
-            "stock_price_idx": stock_price_idx,
-            "expected_lt_return": expected_lt_return,
-            "dz": dz,
-        }
-    )
-    return df
-
-
-def simulation_table(params: Parameters, lookback_df: pl.DataFrame) -> pl.DataFrame:
-    months = params.years * 12
-    monthly_earnings = np.ones(months)
-    annualized_earnings = np.full((months,), np.nan, dtype=float)
-    monthly_distributed = np.full((months,), np.nan, dtype=float)
-    reinvested = np.full((months,), np.nan, dtype=float)
-    stock_total_return_idx = np.ones(months)
-    stock_price_idx = np.ones(months)
-    dz = np.zeros(months)
-
-    asset_alloc_return_ex = np.full((months,), np.nan, dtype=float)
-
-    monthly_earnings[-1] = lookback_df.get_column("monthly_earnings")[-1]
-    reinvested[-1] = lookback_df.get_column("reinvested")[-1]
-    stock_price_idx[-1] = lookback_df.get_column("stock_price_idx")[-1]
-    stock_total_return_idx[-1] = lookback_df.get_column("stock_total_return_idx")[-1]
-
-    for t in range(months):
-        monthly_earnings[t] = (
-            monthly_earnings[t - 1]
-            * (1 + reinvested[t - 1] / stock_price_idx[t - 1])
-            * (1 + dz[t] * params.monthly_vol)
-        )
-        reinvested[t] = monthly_earnings[t] * (1 - params.payout_ratio)
-        monthly_distributed[t] = monthly_earnings[t] * params.payout_ratio
-        stock_price_idx[t] = stock_price_idx[t - 1] + reinvested[t]
-        stock_total_return_idx[t] = (
-            stock_total_return_idx[t - 1]
-            * (stock_price_idx[t] + monthly_distributed[t])
-            / stock_price_idx[t - 1]
-        )
-        annualized_earnings[t] = (
-            ((1 + monthly_earnings[t] / stock_price_idx[t - 1]) ** 12 - 1)
-        ) * stock_price_idx[t - 1]
-
-    expected_lt_return = annualized_earnings[1:] / stock_price_idx[:-1]
-    expected_lt_return = np.insert(expected_lt_return, 0, np.nan)
-
-    df = pl.DataFrame(
-        {
-            "month": np.arange(months),
-            "monthly_earnings": monthly_earnings,
-            "annualized_earnings": annualized_earnings,
-            "monthly_distributed": monthly_distributed,
-            "reinvested": reinvested,
-            "stock_total_return_idx": stock_total_return_idx,
-            "stock_price_idx": stock_price_idx,
-            "expected_lt_return": expected_lt_return,
-            "dz": dz,
-            "asset_alloc_return_ex": asset_alloc_return_ex,
-        }
-    )
-    return df
-
-
-# new_arr = np.pad(arr, (n_nans, 0), constant_values=np.nan)
-
-
 def quad(params: Parameters, df: pl.DataFrame) -> pl.DataFrame:
     """
     Calculate positive roots of quadratic equations from coefficients in polars DataFrame
@@ -377,7 +351,7 @@ def quad(params: Parameters, df: pl.DataFrame) -> pl.DataFrame:
     row = params.lookback_years * 12 + 1
 
     a = np.pad(
-        df.get_column("asset_alloc_return_ex").to_numpy()[row + 1 :]
+        df.get_column("expected_return_x").to_numpy()[row + 1 :]
         * df.get_column("equity_ex").to_numpy()[row:-1]
         / df.get_column("stock_price_idx").to_numpy()[row:-1]
         / (params.ex_gamma * params.expected_equity_vol_ex**2)
@@ -411,5 +385,6 @@ def quad(params: Parameters, df: pl.DataFrame) -> pl.DataFrame:
     root2 = (-b - np.sqrt(discriminant)) / (2 * a)
     positive_roots = np.where(root1 > 0, root1, root2)
 
+    return df.with_columns(pl.Series(name="positive_root", values=positive_roots))
     return df.with_columns(pl.Series(name="positive_root", values=positive_roots))
     return df.with_columns(pl.Series(name="positive_root", values=positive_roots))
