@@ -14,6 +14,17 @@ class MarketParameters:
     payout_ratio: float = 0.5
     history_length: int = 5
 
+    def __repr__(self) -> str:
+        return (
+            f"Market Parameters\n"
+            f"-----------------\n"
+            f"  years: {self.years}\n"
+            f"  initial expected_return: {self.initial_expected_return:.2%}\n"
+            f"  earnings vol: {self.earnings_vol:.2%}\n"
+            f"  payout ratio: {self.payout_ratio:.2%}\n"
+            f"  history length: {self.history_length}\n"
+        )
+
 
 def return_weights(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
     ws = [start_weight * (0.75**i) for i in range(n)]
@@ -41,12 +52,34 @@ class InvestorParameters:
     return_weights_x: np.ndarray = field(default_factory=return_weights)
     speed_of_adjustment: float = 0.1
 
+    def __repr__(self) -> str:
+        return (
+            f"Investor Parameters\n"
+            f"--------------------\n"
+            f"  percent long term: {self.percent_y:.2%}\n"
+            f"  percent exptrapolators: {self.percent_y:.2%}\n"
+            f"  gamma long term: {self.gamma_y:.2}\n"
+            f"  gamma extrapolators: {self.gamma_x:.2}\n"
+            f"  volatility long term: {self.sigma_y:.2%}\n"
+            f"  volatility extrapolators: {self.sigma_x:.2%}\n"
+            f"  speed of adjustmetn: {self.speed_of_adjustment:.2}\n"
+        )
+
 
 @dataclass
 class SqueezeParameters:
     squeeze_target: float = 0.04
     max_deviation: float = 0.04
     squeezing: float = 0.1
+
+    def __repr__(self) -> str:
+        return (
+            f"Squeeze Parameters\n"
+            f"-------------------\n"
+            f"  squeeze target: {self.squeeze_target:.2%}\n"
+            f"  max deviation: {self.max_deviation:.2%}\n"
+            f"  squeezing: {self.squeezing:.2%}\n"
+        )
 
 
 @dataclass

@@ -232,24 +232,29 @@ def data_table(
         ts.cash_x[t] = ts.wealth_x[t] - ts.equity_x[t]
         ts.cash_y[t] = ts.wealth_y[t] - ts.equity_y[t]
 
+        fair_value = ts.annualized_earnings / m.initial_expected_return
+
     # Return results as a Polars DataFrame
     return pl.DataFrame(
         {
-            "annualized_earnings": ts.annualized_earnings,
-            "monthly_earnings": ts.monthly_earnings,
-            "return_idx": ts.return_idx,
-            "price_idx": ts.price_idx,
-            "total_cash": ts.total_cash,
-            "expected_return_y": ts.expected_return_y,
-            "expected_return_x": ts.expected_return_x,
-            "n_year_annualized_return": ts.n_year_annualized_return,
-            "wealth_x": ts.wealth_x,
-            "wealth_y": ts.wealth_y,
-            "equity_x": ts.equity_x,
-            "equity_y": ts.equity_y,
-            "cash_x": ts.cash_x,
-            "cash_y": ts.cash_y,
-            "cash_post_distribution_x": ts.cash_post_distribution_x,
-            "cash_post_distribution_y": ts.cash_post_distribution_y,
+            "Month": list(range(len(ts.annualized_earnings))),
+            "Annualized E": ts.annualized_earnings,
+            "Monthly E": ts.monthly_earnings,
+            "Return Idx": ts.return_idx,
+            "Price Idx": ts.price_idx,
+            "Premium": ts.price_idx / fair_value,
+            "Total_Cash": ts.total_cash,
+            "Expected Return y": ts.expected_return_y,
+            "Expected Return x": ts.expected_return_x,
+            "n Year Ann Ret": ts.n_year_annualized_return,
+            "Wealth x": ts.wealth_x,
+            "Wealth y": ts.wealth_y,
+            "Equity x": ts.equity_x,
+            "Equity y": ts.equity_y,
+            "Cash x": ts.cash_x,
+            "Cash y": ts.cash_y,
+            "Cash Post x": ts.cash_post_distribution_x,
+            "Cash Post y": ts.cash_post_distribution_y,
+            "Fair Value": fair_value,
         }
     )
