@@ -76,14 +76,13 @@ def history_ts(
         s.price_idx[1],
         m.payout_ratio,
     )
-    s.dz[: history_months + 1] = 0
 
     for t in range(2, history_months + 1):
         s.monthly_earnings[t] = monthly_earnings_next(
             s.monthly_earnings[t - 1],
             reinvested,
             s.price_idx[t - 1],
-            s.dz[t],
+            0,
             m.earnings_vol,
         )
         reinvested = s.monthly_earnings[t] * (1 - m.payout_ratio)
@@ -147,6 +146,7 @@ def data_table(
     ts = history_ts(m, investors)
     history_months = 12 * m.history_length
     months = 12 * (m.years + m.history_length)
+    np.random.seed(m.seed)
 
     reinvested = ts.monthly_earnings[history_months] * (1 - m.payout_ratio)
 
@@ -155,7 +155,7 @@ def data_table(
             ts.monthly_earnings[t - 1],
             reinvested,
             ts.price_idx[t - 1],
-            ts.dz[t],
+            ts.dz[t] if m.seed == 0 else np.random.normal(0, 1),
             m.earnings_vol,
         )
         reinvested = ts.monthly_earnings[t] * (1 - m.payout_ratio)
@@ -242,7 +242,7 @@ def data_table(
             "Monthly E": ts.monthly_earnings,
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
-            "Premium": ts.price_idx / fair_value,
+            "Premium": np.log(ts.price_idx / fair_value),
             "Total_Cash": ts.total_cash,
             "Expected Return y": ts.expected_return_y,
             "Expected Return x": ts.expected_return_x,

@@ -13,6 +13,7 @@ class MarketParameters:
     earnings_vol: float = 0.10
     payout_ratio: float = 0.5
     history_length: int = 5
+    seed: int = 987654321  # 0 for dz.py
 
     def __repr__(self) -> str:
         return (
@@ -23,6 +24,7 @@ class MarketParameters:
             f"  earnings vol: {self.earnings_vol:.2%}\n"
             f"  payout ratio: {self.payout_ratio:.2%}\n"
             f"  history length: {self.history_length}\n"
+            f"  seed: {self.seed}\n"
         )
 
 
