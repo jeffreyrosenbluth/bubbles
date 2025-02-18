@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
@@ -6,8 +6,7 @@ import polars as pl
 from bubbles.dz import dz
 
 
-@dataclass
-class MarketParameters:
+class MarketParameters(NamedTuple):
     years: int = 50
     initial_expected_return: float = 0.04
     earnings_vol: float = 0.10
@@ -43,33 +42,38 @@ def weighted_avg_returns(return_idx: np.ndarray, weights: np.ndarray, t: int) ->
     return result
 
 
-@dataclass
-class InvestorParameters:
-    percent_y: float = 0.5
-    percent_x: float = 1 - percent_y
-    gamma_y: float = 3.0
-    gamma_x: float = 3.0
-    sigma_y: float = 0.16
-    sigma_x: float = 0.16
-    return_weights_x: np.ndarray = field(default_factory=return_weights)
-    speed_of_adjustment: float = 0.1
+class InvestorParameters(NamedTuple):
+    percent: float = 0.5
+    gamma: float = 3.0
+    sigma: float = 0.16
+    weights: np.ndarray | None = None  # field(default_factory=return_weights)
+    speed_of_adjustment: float | None = None  # 0.1
 
     def __repr__(self) -> str:
+        weights_str = "None"
+        if self.weights is not None:
+            if callable(self.weights):
+                weights = self.weights()
+                weights_str = np.array2string(weights, precision=3)
+            else:
+                weights_str = np.array2string(self.weights, precision=3)
+        speed_of_adjustment_str = (
+            "None"
+            if self.speed_of_adjustment is None
+            else str(self.speed_of_adjustment)
+        )
         return (
             f"Investor Parameters\n"
             f"--------------------\n"
-            f"  percent long term: {self.percent_y:.2%}\n"
-            f"  percent exptrapolators: {self.percent_y:.2%}\n"
-            f"  gamma long term: {self.gamma_y:.2}\n"
-            f"  gamma extrapolators: {self.gamma_x:.2}\n"
-            f"  volatility long term: {self.sigma_y:.2%}\n"
-            f"  volatility extrapolators: {self.sigma_x:.2%}\n"
-            f"  speed of adjustmetn: {self.speed_of_adjustment:.2}\n"
+            f"  percent: {self.percent:.2%}\n"
+            f"  gamma: {self.gamma:.2}\n"
+            f"  volatility: {self.sigma:.2%}\n"
+            f"  weights: {weights_str}\n"
+            f"  speed of adjustment: {speed_of_adjustment_str}\n"
         )
 
 
-@dataclass
-class SqueezeParameters:
+class SqueezeParameters(NamedTuple):
     squeeze_target: float = 0.04
     max_deviation: float = 0.04
     squeezing: float = 0.1
@@ -84,8 +88,7 @@ class SqueezeParameters:
         )
 
 
-@dataclass
-class TimeSeries:
+class TimeSeries(NamedTuple):
     monthly_earnings: np.ndarray
     price_idx: np.ndarray
     annualized_earnings: np.ndarray

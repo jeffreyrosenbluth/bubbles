@@ -61,7 +61,8 @@ def return_idx_next(
 
 def history_ts(
     m: MarketParameters,
-    investors: InvestorParameters,
+    investors_x: InvestorParameters,
+    investors_y: InvestorParameters,
 ) -> TimeSeries:
     history_months = 12 * m.history_length
     s = initialize_time_series(m)
@@ -105,31 +106,31 @@ def history_ts(
     merton_share_y = (
         s.annualized_earnings[history_months]
         / s.price_idx[history_months]
-        / (investors.gamma_y * investors.sigma_y**2)
+        / (investors_y.gamma * investors_y.sigma**2)
     )
     merton_share_x = (
         s.annualized_earnings[history_months]
         / s.price_idx[history_months]
-        / (investors.gamma_x * investors.sigma_x**2)
+        / (investors_x.gamma * investors_x.sigma**2)
     )
 
     starting_wealth = s.price_idx[history_months] / (
-        investors.percent_y * merton_share_y + investors.percent_x * merton_share_x
+        investors_y.percent * merton_share_y + investors_x.percent * merton_share_x
     )
 
     s.total_cash[history_months] = starting_wealth - s.price_idx[history_months]
     s.expected_return_x[history_months] = s.expected_return_y[history_months]
-    s.wealth_x[history_months] = investors.percent_x * starting_wealth
-    s.wealth_y[history_months] = investors.percent_y * starting_wealth
+    s.wealth_x[history_months] = investors_x.percent * starting_wealth
+    s.wealth_y[history_months] = investors_y.percent * starting_wealth
     s.equity_x[history_months] = (
         s.wealth_x[history_months]
         * s.expected_return_x[history_months]
-        / (investors.gamma_x * investors.sigma_x**2)
+        / (investors_x.gamma * investors_x.sigma**2)
     )
     s.equity_y[history_months] = (
         s.wealth_y[history_months]
         * s.expected_return_y[history_months]
-        / (investors.gamma_y * investors.sigma_y**2)
+        / (investors_y.gamma * investors_y.sigma**2)
     )
     s.cash_x[history_months] = s.wealth_x[history_months] - s.equity_x[history_months]
     s.cash_y[history_months] = s.wealth_y[history_months] - s.equity_y[history_months]
@@ -138,12 +139,13 @@ def history_ts(
 
 def data_table(
     m: MarketParameters,
-    investors: InvestorParameters,
+    investors_x: InvestorParameters,
+    investors_y: InvestorParameters,
     squeeze_params: SqueezeParameters,
 ) -> pl.DataFrame:
     """Simulates stock price, earnings, reinvestment, and returns over a given period."""
 
-    ts = history_ts(m, investors)
+    ts = history_ts(m, investors_x, investors_y)
     history_months = 12 * m.history_length
     months = 12 * (m.years + m.history_length)
     np.random.seed(m.seed)
@@ -172,8 +174,8 @@ def data_table(
             ts.n_year_annualized_return[t], m.initial_expected_return, squeeze_params
         )
         ts.expected_return_x[t] = (
-            ts.squeeze[t] * investors.speed_of_adjustment
-            + (1 - investors.speed_of_adjustment) * ts.expected_return_x[t - 1]
+            ts.squeeze[t] * investors_x.speed_of_adjustment
+            + (1 - investors_x.speed_of_adjustment) * ts.expected_return_x[t - 1]
         )
         ts.cash_post_distribution_x[t] = (
             ts.cash_x[t - 1]
@@ -190,18 +192,18 @@ def data_table(
         ts.a[t] = (
             ts.expected_return_x[t]
             * ts.equity_x[t - 1]
-            / (ts.price_idx[t - 1] * investors.gamma_x * investors.sigma_x**2)
+            / (ts.price_idx[t - 1] * investors_x.gamma * investors_x.sigma**2)
             - 1
         )
         ts.b[t] = ts.annualized_earnings[t] * ts.equity_y[t - 1] / (
-            ts.price_idx[t - 1] * investors.gamma_y * investors.sigma_y**2
+            ts.price_idx[t - 1] * investors_y.gamma * investors_y.sigma**2
         ) + ts.expected_return_x[t] * ts.cash_post_distribution_x[t] / (
-            investors.gamma_x * investors.sigma_x**2
+            investors_x.gamma * investors_x.sigma**2
         )
         ts.c[t] = (
             ts.annualized_earnings[t]
             * ts.cash_post_distribution_y[t]
-            / (investors.gamma_y * investors.sigma_y**2)
+            / (investors_y.gamma * investors_y.sigma**2)
         )
 
         ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
@@ -222,12 +224,12 @@ def data_table(
         ts.equity_x[t] = (
             ts.wealth_x[t]
             * ts.expected_return_x[t]
-            / (investors.gamma_x * investors.sigma_x**2)
+            / (investors_x.gamma * investors_x.sigma**2)
         )
         ts.equity_y[t] = (
             ts.wealth_y[t]
             * ts.expected_return_y[t]
-            / (investors.gamma_y * investors.sigma_y**2)
+            / (investors_y.gamma * investors_y.sigma**2)
         )
         ts.cash_x[t] = ts.wealth_x[t] - ts.equity_x[t]
         ts.cash_y[t] = ts.wealth_y[t] - ts.equity_y[t]
