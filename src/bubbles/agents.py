@@ -253,6 +253,8 @@ def data_table(
             "Equity y": ts.equity_y,
             "Cash x": ts.cash_x,
             "Cash y": ts.cash_y,
+            "Kappa_x": ts.equity_x / ts.wealth_x,
+            "Kappa_y": ts.equity_y / ts.wealth_y,
             "Cash Post x": ts.cash_post_distribution_x,
             "Cash Post y": ts.cash_post_distribution_y,
             "Fair Value": fair_value,
