@@ -1,3 +1,9 @@
+"""
+An equilibrium 2-agent model in which the interaction between investors with different return
+expectations produces a rich market dynamic that includes equity market volatility in excess of earnings volatility,
+short-term trends, long-term mean reversion, high trading volume, and bubbles and crashes.
+"""
+
 import numpy as np
 import polars as pl
 
@@ -15,7 +21,22 @@ SQRT_12 = np.sqrt(12)
 
 
 def quadratic(a: float, b: float, c: float) -> float:
+    """Solve quadratic equation of the form ax² + bx + c = 0, returning the positive root.
+
+    Args:
+        a: Coefficient of x²
+        b: Coefficient of x
+        c: Constant term
+
+    Returns:
+        float: The positive root of the quadratic equation
+
+    Raises:
+        ValueError: If the discriminant is negative (no real solutions)
+    """
     discriminant = b**2 - 4 * a * c
+    if discriminant < 0:
+        raise ValueError("Quadratic equation has no real solutions")
     return (-b - np.sqrt(discriminant)) / (2 * a)
 
 
@@ -24,8 +45,20 @@ def monthly_earnings_next(
     reinvested: float,
     price_idx_pred: float,
     dz: float,
-    earnings_vol,
+    earnings_vol: float,
 ) -> float:
+    """Calculate the next month's earnings based on previous earnings and market conditions.
+
+    Args:
+        monthly_earnings_prev: Previous month's earnings
+        reinvested: Amount of earnings reinvested
+        price_idx_pred: Predicted price index
+        dz: Random shock term
+        earnings_vol: Earnings volatility
+
+    Returns:
+        float: Next month's earnings
+    """
     return (
         monthly_earnings_prev
         * (1 + reinvested / price_idx_pred)
@@ -34,6 +67,15 @@ def monthly_earnings_next(
 
 
 def annualize(monthly_earnings: float, price_idx_prev: float) -> float:
+    """Convert monthly earnings to annualized returns.
+
+    Args:
+        monthly_earnings: Monthly earnings value
+        price_idx_prev: Previous price index
+
+    Returns:
+        float: Annualized earnings value
+    """
     return ((1 + monthly_earnings / price_idx_prev) ** 12 - 1) * price_idx_prev
 
 
@@ -42,6 +84,16 @@ def normalize(
     initial_expected_return: float,
     squeeze_params: SqueezeParameters,
 ) -> float:
+    """Normalize returns using a hyperbolic tangent transformation.
+
+    Args:
+        n_year_annualized_return: The n-year annualized return
+        initial_expected_return: Initial expected return
+        squeeze_params: Parameters controlling the squeeze transformation
+
+    Returns:
+        float: Normalized return value between squeeze target ± max deviation
+    """
     return squeeze_params.squeeze_target + squeeze_params.max_deviation * np.tanh(
         (n_year_annualized_return - initial_expected_return) / squeeze_params.squeezing
     )
@@ -54,101 +106,206 @@ def return_idx_next(
     price_idx: float,
     payout_ratio: float,
 ) -> float:
-    return return_idx_prev * (
-        (price_idx + monthly_earnings * payout_ratio) / price_idx_prev
-    )
+    """Calculate the next return index value.
+
+    Args:
+        return_idx_prev: Previous return index
+        monthly_earnings: Current monthly earnings
+        price_idx_prev: Previous price index
+        price_idx: Current price index
+        payout_ratio: Ratio of earnings paid out
+
+    Returns:
+        float: Next return index value
+    """
+    return return_idx_prev * ((price_idx + monthly_earnings * payout_ratio) / price_idx_prev)
+
+
+def merton_share(
+    annualized_earnings: float,
+    price_idx: float,
+    gamma: float,
+    sigma: float,
+) -> float:
+    """Calculate the Merton optimal portfolio share.
+
+    Args:
+        annualized_earnings: The annualized earnings
+        price_idx: The price index
+        gamma: Risk aversion parameter
+        sigma: Volatility parameter
+
+    Returns:
+        float: The optimal portfolio share according to Merton's formula
+    """
+    return annualized_earnings / (price_idx * gamma * sigma**2)
 
 
 def history_ts(
-    m: MarketParameters,
-    investors_x: InvestorParameters,
-    investors_y: InvestorParameters,
+    mp: MarketParameters,
+    ip_x: InvestorParameters,
+    ip_y: InvestorParameters,
 ) -> TimeSeries:
-    history_months = 12 * m.history_length
-    s = initialize_time_series(m)
-    s.monthly_earnings[1] = (1 + m.initial_expected_return) ** (1 / 12) - 1
-    reinvested = s.monthly_earnings[1] * (1 - m.payout_ratio)
-    s.price_idx[1] = s.price_idx[0] + reinvested
-    s.annualized_earnings[1] = annualize(s.monthly_earnings[1], s.price_idx[0])
-    s.return_idx[1] = return_idx_next(
-        s.return_idx[0],
-        s.monthly_earnings[1],
-        s.price_idx[0],
-        s.price_idx[1],
-        m.payout_ratio,
+    """Generate historical time series data for market initialization.
+
+    This function simulates historical market data to establish initial conditions
+    for the main simulation. It creates a baseline of price indices, earnings,
+    and investor positions.
+
+    Args:
+        mp: Market parameters
+        ip_x: Parameters for investor type X (trend follower)
+        ip_y: Parameters for investor type Y (fundamentalist)
+
+    Returns:
+        TimeSeries: Historical market data and investor positions
+    """
+    history_months = 12 * mp.history_length
+    ts = initialize_time_series(mp)
+    investors = [(ip_x, ts.investor_x), (ip_y, ts.investor_y)]
+
+    ts.monthly_earnings[1] = (1 + mp.initial_expected_return) ** (1 / 12) - 1
+    reinvested = ts.monthly_earnings[1] * (1 - mp.payout_ratio)
+    ts.price_idx[1] = ts.price_idx[0] + reinvested
+    ts.annualized_earnings[1] = annualize(ts.monthly_earnings[1], ts.price_idx[0])
+    ts.return_idx[1] = return_idx_next(
+        ts.return_idx[0],
+        ts.monthly_earnings[1],
+        ts.price_idx[0],
+        ts.price_idx[1],
+        mp.payout_ratio,
     )
 
     for t in range(2, history_months + 1):
-        s.monthly_earnings[t] = monthly_earnings_next(
-            s.monthly_earnings[t - 1],
+        ts.monthly_earnings[t] = monthly_earnings_next(
+            ts.monthly_earnings[t - 1],
             reinvested,
-            s.price_idx[t - 1],
+            ts.price_idx[t - 1],
             0,
-            m.earnings_vol,
+            mp.earnings_vol,
         )
-        reinvested = s.monthly_earnings[t] * (1 - m.payout_ratio)
+        reinvested = ts.monthly_earnings[t] * (1 - mp.payout_ratio)
 
-        s.price_idx[t] = s.price_idx[t - 1] + reinvested
-        s.annualized_earnings[t] = annualize(s.monthly_earnings[t], s.price_idx[t - 1])
-        s.return_idx[t] = return_idx_next(
-            s.return_idx[t - 1],
-            s.monthly_earnings[t],
-            s.price_idx[t - 1],
-            s.price_idx[t],
-            m.payout_ratio,
+        ts.price_idx[t] = ts.price_idx[t - 1] + reinvested
+        ts.annualized_earnings[t] = annualize(ts.monthly_earnings[t], ts.price_idx[t - 1])
+        ts.return_idx[t] = return_idx_next(
+            ts.return_idx[t - 1],
+            ts.monthly_earnings[t],
+            ts.price_idx[t - 1],
+            ts.price_idx[t],
+            mp.payout_ratio,
         )
 
-    s.expected_return_y[history_months] = (
-        s.annualized_earnings[history_months] / s.price_idx[history_months]
-    )
-    s.n_year_annualized_return[history_months] = s.expected_return_y[history_months]
+    expected_return = ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+    ts.investor_y.expected_return[history_months] = expected_return
+    ts.investor_x.expected_return[history_months] = expected_return
+    ts.n_year_annualized_return[history_months] = expected_return
 
-    merton_share_y = (
-        s.annualized_earnings[history_months]
-        / s.price_idx[history_months]
-        / (investors_y.gamma * investors_y.sigma**2)
-    )
-    merton_share_x = (
-        s.annualized_earnings[history_months]
-        / s.price_idx[history_months]
-        / (investors_x.gamma * investors_x.sigma**2)
+    merton_share_y = merton_share(
+        ts.annualized_earnings[history_months],
+        ts.price_idx[history_months],
+        ip_y.gamma,
+        ip_y.sigma,
     )
 
-    starting_wealth = s.price_idx[history_months] / (
-        investors_y.percent * merton_share_y + investors_x.percent * merton_share_x
+    merton_share_x = merton_share(
+        ts.annualized_earnings[history_months],
+        ts.price_idx[history_months],
+        ip_x.gamma,
+        ip_x.sigma,
     )
 
-    s.total_cash[history_months] = starting_wealth - s.price_idx[history_months]
-    s.expected_return_x[history_months] = s.expected_return_y[history_months]
-    s.wealth_x[history_months] = investors_x.percent * starting_wealth
-    s.wealth_y[history_months] = investors_y.percent * starting_wealth
-    s.equity_x[history_months] = (
-        s.wealth_x[history_months]
-        * s.expected_return_x[history_months]
-        / (investors_x.gamma * investors_x.sigma**2)
+    starting_wealth = ts.price_idx[history_months] / (
+        ip_y.percent * merton_share_y + ip_x.percent * merton_share_x
     )
-    s.equity_y[history_months] = (
-        s.wealth_y[history_months]
-        * s.expected_return_y[history_months]
-        / (investors_y.gamma * investors_y.sigma**2)
+
+    ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
+
+    for ip, inv in investors:
+        inv.wealth[history_months] = ip.percent * starting_wealth
+        inv.equity[history_months] = (
+            inv.wealth[history_months]
+            * inv.expected_return[history_months]
+            / (ip.gamma * ip.sigma**2)
+        )
+        inv.cash[history_months] = inv.wealth[history_months] - inv.equity[history_months]
+    return ts
+
+
+def calculate_quadratic_coefficients(
+    t: int,
+    ts: TimeSeries,
+    ip_x: InvestorParameters,
+    ip_y: InvestorParameters,
+) -> tuple[float, float, float]:
+    """Calculate coefficients for the quadratic equation determining the next price index.
+
+    Args:
+        t: Current time step
+        ts: Time series data
+        ip_x: Parameters for trend-following investors
+        ip_y: Parameters for fundamentalist investors
+
+    Returns:
+        tuple[float, float, float]: Coefficients (a, b, c) for the quadratic equation
+    """
+    a = (
+        ts.investor_x.expected_return[t]
+        * ts.investor_x.equity[t - 1]
+        / (ts.price_idx[t - 1] * ip_x.gamma * ip_x.sigma**2)
+        - 1
     )
-    s.cash_x[history_months] = s.wealth_x[history_months] - s.equity_x[history_months]
-    s.cash_y[history_months] = s.wealth_y[history_months] - s.equity_y[history_months]
-    return s
+
+    b = ts.annualized_earnings[t] * ts.investor_y.equity[t - 1] / (
+        ts.price_idx[t - 1] * ip_y.gamma * ip_y.sigma**2
+    ) + ts.investor_x.expected_return[t] * ts.investor_x.cash_post_distribution[t] / (
+        ip_x.gamma * ip_x.sigma**2
+    )
+
+    c = (
+        ts.annualized_earnings[t]
+        * ts.investor_y.cash_post_distribution[t]
+        / (ip_y.gamma * ip_y.sigma**2)
+    )
+
+    return a, b, c
 
 
 def data_table(
     m: MarketParameters,
-    investors_x: InvestorParameters,
-    investors_y: InvestorParameters,
+    investor_params_x: InvestorParameters,
+    investor_params_y: InvestorParameters,
     squeeze_params: SqueezeParameters,
 ) -> pl.DataFrame:
-    """Simulates stock price, earnings, reinvestment, and returns over a given period."""
+    """Simulate market dynamics and return results as a DataFrame.
 
-    ts = history_ts(m, investors_x, investors_y)
+    This function performs the main market simulation, modeling the interaction
+    between two types of investors (trend followers and fundamentalists) and
+    their impact on market prices and returns.
+
+    Args:
+        m: Market parameters including simulation length and initial conditions
+        investor_params_x: Parameters for trend-following investors
+        investor_params_y: Parameters for fundamentalist investors
+        squeeze_params: Parameters controlling return normalization
+
+    Returns:
+        pl.DataFrame: DataFrame containing simulation results including:
+            - Month: Time index
+            - Annualized E: Annualized earnings
+            - Monthly E: Monthly earnings
+            - Return Idx: Return index
+            - Price Idx: Price index
+            - Premium: Log premium over fair value
+            - Various investor-specific metrics (wealth, equity, cash positions)
+    """
+
+    ts = history_ts(m, investor_params_x, investor_params_y)
     history_months = 12 * m.history_length
     months = 12 * (m.years + m.history_length)
     np.random.seed(m.seed)
+
+    investors = [(investor_params_x, ts.investor_x), (investor_params_y, ts.investor_y)]
 
     reinvested = ts.monthly_earnings[history_months] * (1 - m.payout_ratio)
 
@@ -161,78 +318,45 @@ def data_table(
             m.earnings_vol,
         )
         reinvested = ts.monthly_earnings[t] * (1 - m.payout_ratio)
-        ts.annualized_earnings[t] = annualize(
-            ts.monthly_earnings[t], ts.price_idx[t - 1]
-        )
-        ts.total_cash[t] = (
-            ts.total_cash[t - 1] + ts.monthly_earnings[t] * m.payout_ratio
-        )
-        ts.n_year_annualized_return[t] = weighted_avg_returns(
-            ts.return_idx, return_weights(), t
-        )
+        ts.annualized_earnings[t] = annualize(ts.monthly_earnings[t], ts.price_idx[t - 1])
+        ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * m.payout_ratio
+        ts.n_year_annualized_return[t] = weighted_avg_returns(ts.return_idx, return_weights(), t)
         ts.squeeze[t] = normalize(
             ts.n_year_annualized_return[t], m.initial_expected_return, squeeze_params
         )
-        ts.expected_return_x[t] = (
-            ts.squeeze[t] * investors_x.speed_of_adjustment
-            + (1 - investors_x.speed_of_adjustment) * ts.expected_return_x[t - 1]
+        ts.investor_x.expected_return[t] = (
+            ts.squeeze[t] * investor_params_x.speed_of_adjustment
+            + (1 - investor_params_x.speed_of_adjustment) * ts.investor_x.expected_return[t - 1]
         )
-        ts.cash_post_distribution_x[t] = (
-            ts.cash_x[t - 1]
-            + (ts.monthly_earnings[t] * m.payout_ratio)
-            * ts.equity_x[t - 1]
-            / ts.price_idx[t - 1]
-        )
-        ts.cash_post_distribution_y[t] = (
-            ts.cash_y[t - 1]
-            + (ts.monthly_earnings[t] * m.payout_ratio)
-            * ts.equity_y[t - 1]
-            / ts.price_idx[t - 1]
-        )
-        ts.a[t] = (
-            ts.expected_return_x[t]
-            * ts.equity_x[t - 1]
-            / (ts.price_idx[t - 1] * investors_x.gamma * investors_x.sigma**2)
-            - 1
-        )
-        ts.b[t] = ts.annualized_earnings[t] * ts.equity_y[t - 1] / (
-            ts.price_idx[t - 1] * investors_y.gamma * investors_y.sigma**2
-        ) + ts.expected_return_x[t] * ts.cash_post_distribution_x[t] / (
-            investors_x.gamma * investors_x.sigma**2
-        )
-        ts.c[t] = (
-            ts.annualized_earnings[t]
-            * ts.cash_post_distribution_y[t]
-            / (investors_y.gamma * investors_y.sigma**2)
+
+        for _, investor in investors:
+            investor.cash_post_distribution[t] = (
+                investor.cash[t - 1]
+                + (ts.monthly_earnings[t] * m.payout_ratio)
+                * investor.equity[t - 1]
+                / ts.price_idx[t - 1]
+            )
+
+        ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(
+            t, ts, investor_params_x, investor_params_y
         )
 
         ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
-        ts.expected_return_y[t] = ts.annualized_earnings[t] / ts.price_idx[t]
+        ts.investor_y.expected_return[t] = ts.annualized_earnings[t] / ts.price_idx[t]
         ts.return_idx[t] = ts.return_idx[t - 1] * (
-            (ts.price_idx[t] + ts.monthly_earnings[t] * m.payout_ratio)
-            / ts.price_idx[t - 1]
+            (ts.price_idx[t] + ts.monthly_earnings[t] * m.payout_ratio) / ts.price_idx[t - 1]
         )
-
-        ts.wealth_x[t] = (
-            ts.cash_x[t - 1]
-            + ts.equity_x[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
-        )
-        ts.wealth_y[t] = (
-            ts.cash_y[t - 1]
-            + ts.equity_y[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
-        )
-        ts.equity_x[t] = (
-            ts.wealth_x[t]
-            * ts.expected_return_x[t]
-            / (investors_x.gamma * investors_x.sigma**2)
-        )
-        ts.equity_y[t] = (
-            ts.wealth_y[t]
-            * ts.expected_return_y[t]
-            / (investors_y.gamma * investors_y.sigma**2)
-        )
-        ts.cash_x[t] = ts.wealth_x[t] - ts.equity_x[t]
-        ts.cash_y[t] = ts.wealth_y[t] - ts.equity_y[t]
+        for investor_params, investor in investors:
+            investor.wealth[t] = (
+                investor.cash[t - 1]
+                + investor.equity[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
+            )
+            investor.equity[t] = (
+                investor.wealth[t]
+                * investor.expected_return[t]
+                / (investor_params.gamma * investor_params.sigma**2)
+            )
+            investor.cash[t] = investor.wealth[t] - investor.equity[t]
 
         fair_value = ts.annualized_earnings / m.initial_expected_return
 
@@ -245,20 +369,20 @@ def data_table(
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),
-            "Total_Cash": ts.total_cash,
-            "Expected Return y": ts.expected_return_y,
-            "Expected Return x": ts.expected_return_x,
-            "n Year Ann Ret": ts.n_year_annualized_return,
-            "Wealth x": ts.wealth_x,
-            "Wealth y": ts.wealth_y,
-            "Equity x": ts.equity_x,
-            "Equity y": ts.equity_y,
-            "Cash x": ts.cash_x,
-            "Cash y": ts.cash_y,
-            "Kappa_x": ts.equity_x / ts.wealth_x,
-            "Kappa_y": ts.equity_y / ts.wealth_y,
-            "Cash Post x": ts.cash_post_distribution_x,
-            "Cash Post y": ts.cash_post_distribution_y,
+            # "Total_Cash": ts.total_cash,
+            "Expected Return y": ts.investor_y.expected_return,
+            "Expected Return x": ts.investor_x.expected_return,
+            # "n Year Ann Ret": ts.n_year_annualized_return,
+            "Wealth x": ts.investor_x.wealth,
+            "Wealth y": ts.investor_y.wealth,
+            "Equity x": ts.investor_x.equity,
+            "Equity y": ts.investor_y.equity,
+            "Cash x": ts.investor_x.cash,
+            "Cash y": ts.investor_y.cash,
+            "Kappa_x": ts.investor_x.equity / ts.investor_x.wealth,
+            "Kappa_y": ts.investor_y.equity / ts.investor_y.wealth,
+            # # "Cash Post x": ts.investor_x.cash_post_distribution,
+            # "Cash Post y": ts.investor_y.cash_post_distribution,
             "Fair Value": fair_value,
         }
     )
