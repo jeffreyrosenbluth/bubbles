@@ -1,3 +1,4 @@
+from dataclasses import field
 from typing import NamedTuple
 
 import numpy as np
@@ -110,28 +111,35 @@ class InvestorParameters(NamedTuple):
             f"  speed of adjustment: {speed_of_adjustment_str}\n"
         )
 
+    def get_gamma(self) -> float:
+        return self.gamma
 
-class SqueezeParameters(NamedTuple):
-    """Parameters controlling market squeeze behavior.
+    def get_sigma(self) -> float:
+        return self.sigma
 
-    Attributes:
-        squeeze_target: Target return during squeeze periods
-        max_deviation: Maximum allowed deviation from target
-        squeezing: Intensity of the squeeze effect
-    """
 
+class ExtrapolatorParameters(NamedTuple):
+    ip: InvestorParameters = InvestorParameters()
+    weights: np.ndarray[float] = field(default_factory=return_weights)
+    speed_of_adjustment: float = 0.1
     squeeze_target: float = 0.04
     max_deviation: float = 0.04
     squeezing: float = 0.1
 
-    def __repr__(self) -> str:
-        return (
-            f"Squeeze Parameters\n"
-            f"-------------------\n"
-            f"  squeeze target: {self.squeeze_target:.2%}\n"
-            f"  max deviation: {self.max_deviation:.2%}\n"
-            f"  squeezing: {self.squeezing:.2%}\n"
-        )
+    def get_gamma(self) -> float:
+        return self.ip.gamma
+
+    def get_sigma(self) -> float:
+        return self.ip.sigma
+
+    # def __repr__(self) -> str:
+    #     return (
+    #         f"Squeeze Parameters\n"
+    #         f"-------------------\n"
+    #         f"  squeeze target: {self.squeeze_target:.2%}\n"
+    #         f"  max deviation: {self.max_deviation:.2%}\n"
+    #         f"  squeezing: {self.squeezing:.2%}\n"
+    #     )
 
 
 class Investor(NamedTuple):

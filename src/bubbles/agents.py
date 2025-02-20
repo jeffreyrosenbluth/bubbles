@@ -8,9 +8,9 @@ import numpy as np
 import polars as pl
 
 from bubbles.core import (
+    ExtrapolatorParameters,
     InvestorParameters,
     MarketParameters,
-    SqueezeParameters,
     TimeSeries,
     initialize_time_series,
     return_weights,
@@ -82,7 +82,7 @@ def annualize(monthly_earnings: float, price_idx_prev: float) -> float:
 def normalize(
     n_year_annualized_return: float,
     initial_expected_return: float,
-    squeeze_params: SqueezeParameters,
+    extrapolator_params: ExtrapolatorParameters,
 ) -> float:
     """Normalize returns using a hyperbolic tangent transformation.
 
@@ -94,8 +94,8 @@ def normalize(
     Returns:
         float: Normalized return value between squeeze target ± max deviation
     """
-    return squeeze_params.squeeze_target + squeeze_params.max_deviation * np.tanh(
-        (n_year_annualized_return - initial_expected_return) / squeeze_params.squeezing
+    return extrapolator_params.squeeze_target + extrapolator_params.max_deviation * np.tanh(
+        (n_year_annualized_return - initial_expected_return) / extrapolator_params.squeezing
     )
 
 
@@ -143,8 +143,8 @@ def merton_share(
 
 def history_ts(
     mp: MarketParameters,
-    ip_x: InvestorParameters,
-    ip_y: InvestorParameters,
+    xp: ExtrapolatorParameters,
+    yp: InvestorParameters,
 ) -> TimeSeries:
     """Generate historical time series data for market initialization.
 
@@ -162,7 +162,7 @@ def history_ts(
     """
     history_months = 12 * mp.history_length
     ts = initialize_time_series(mp)
-    investors = [(ip_x, ts.investor_x), (ip_y, ts.investor_y)]
+    investors = [(xp, ts.investor_x), (yp, ts.investor_y)]
 
     ts.monthly_earnings[1] = (1 + mp.initial_expected_return) ** (1 / 12) - 1
     reinvested = ts.monthly_earnings[1] * (1 - mp.payout_ratio)
@@ -204,19 +204,19 @@ def history_ts(
     merton_share_y = merton_share(
         ts.annualized_earnings[history_months],
         ts.price_idx[history_months],
-        ip_y.gamma,
-        ip_y.sigma,
+        yp.get_gamma(),
+        yp.get_sigma(),
     )
 
     merton_share_x = merton_share(
         ts.annualized_earnings[history_months],
         ts.price_idx[history_months],
-        ip_x.gamma,
-        ip_x.sigma,
+        xp.get_gamma(),
+        xp.get_gamma(),
     )
 
     starting_wealth = ts.price_idx[history_months] / (
-        ip_y.percent * merton_share_y + ip_x.percent * merton_share_x
+        yp.percent * merton_share_y + xp.percent * merton_share_x
     )
 
     ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
@@ -226,7 +226,7 @@ def history_ts(
         inv.equity[history_months] = (
             inv.wealth[history_months]
             * inv.expected_return[history_months]
-            / (ip.gamma * ip.sigma**2)
+            / (ip.get_gamma() * ip.get_sigma() ** 2)
         )
         inv.cash[history_months] = inv.wealth[history_months] - inv.equity[history_months]
     return ts
@@ -235,8 +235,8 @@ def history_ts(
 def calculate_quadratic_coefficients(
     t: int,
     ts: TimeSeries,
-    ip_x: InvestorParameters,
-    ip_y: InvestorParameters,
+    xp: ExtrapolatorParameters,
+    yp: InvestorParameters,
 ) -> tuple[float, float, float]:
     """Calculate coefficients for the quadratic equation determining the next price index.
 
@@ -252,20 +252,20 @@ def calculate_quadratic_coefficients(
     a = (
         ts.investor_x.expected_return[t]
         * ts.investor_x.equity[t - 1]
-        / (ts.price_idx[t - 1] * ip_x.gamma * ip_x.sigma**2)
+        / (ts.price_idx[t - 1] * xp.get_gamma() * xp.get_sigma() ** 2)
         - 1
     )
 
     b = ts.annualized_earnings[t] * ts.investor_y.equity[t - 1] / (
-        ts.price_idx[t - 1] * ip_y.gamma * ip_y.sigma**2
+        ts.price_idx[t - 1] * yp.gamma * yp.sigma**2
     ) + ts.investor_x.expected_return[t] * ts.investor_x.cash_post_distribution[t] / (
-        ip_x.gamma * ip_x.sigma**2
+        xp.get_gamma() * xp.get_sigma() ** 2
     )
 
     c = (
         ts.annualized_earnings[t]
         * ts.investor_y.cash_post_distribution[t]
-        / (ip_y.gamma * ip_y.sigma**2)
+        / (yp.get_gamma() * yp.get_sigma() ** 2)
     )
 
     return a, b, c
@@ -273,9 +273,8 @@ def calculate_quadratic_coefficients(
 
 def data_table(
     m: MarketParameters,
-    investor_params_x: InvestorParameters,
-    investor_params_y: InvestorParameters,
-    squeeze_params: SqueezeParameters,
+    ip_x: ExtrapolatorParameters,
+    ip_y: InvestorParameters,
 ) -> pl.DataFrame:
     """Simulate market dynamics and return results as a DataFrame.
 
@@ -300,12 +299,12 @@ def data_table(
             - Various investor-specific metrics (wealth, equity, cash positions)
     """
 
-    ts = history_ts(m, investor_params_x, investor_params_y)
+    ts = history_ts(m, ip_x, ip_y)
     history_months = 12 * m.history_length
     months = 12 * (m.years + m.history_length)
     np.random.seed(m.seed)
 
-    investors = [(investor_params_x, ts.investor_x), (investor_params_y, ts.investor_y)]
+    investors = [(ip_x, ts.investor_x), (ip_y, ts.investor_y)]
 
     reinvested = ts.monthly_earnings[history_months] * (1 - m.payout_ratio)
 
@@ -321,12 +320,10 @@ def data_table(
         ts.annualized_earnings[t] = annualize(ts.monthly_earnings[t], ts.price_idx[t - 1])
         ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * m.payout_ratio
         ts.n_year_annualized_return[t] = weighted_avg_returns(ts.return_idx, return_weights(), t)
-        ts.squeeze[t] = normalize(
-            ts.n_year_annualized_return[t], m.initial_expected_return, squeeze_params
-        )
+        ts.squeeze[t] = normalize(ts.n_year_annualized_return[t], m.initial_expected_return, ip_x)
         ts.investor_x.expected_return[t] = (
-            ts.squeeze[t] * investor_params_x.speed_of_adjustment
-            + (1 - investor_params_x.speed_of_adjustment) * ts.investor_x.expected_return[t - 1]
+            ts.squeeze[t] * ip_x.speed_of_adjustment
+            + (1 - ip_x.speed_of_adjustment) * ts.investor_x.expected_return[t - 1]
         )
 
         for _, investor in investors:
@@ -337,9 +334,7 @@ def data_table(
                 / ts.price_idx[t - 1]
             )
 
-        ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(
-            t, ts, investor_params_x, investor_params_y
-        )
+        ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(t, ts, ip_x, ip_y)
 
         ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
         ts.investor_y.expected_return[t] = ts.annualized_earnings[t] / ts.price_idx[t]
