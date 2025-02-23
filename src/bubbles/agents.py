@@ -13,26 +13,6 @@ from bubbles.core import InvestorProvider, Market, TimeSeries, weighted_avg_retu
 SQRT_12 = np.sqrt(12)
 
 
-def quadratic(a: float, b: float, c: float) -> float:
-    """Solve quadratic equation of the form ax² + bx + c = 0, returning the positive root.
-
-    Args:
-        a: Coefficient of x²
-        b: Coefficient of x
-        c: Constant term
-
-    Returns:
-        float: The positive root of the quadratic equation
-
-    Raises:
-        ValueError: If the discriminant is negative (no real solutions)
-    """
-    discriminant = b**2 - 4 * a * c
-    if discriminant < 0:
-        raise ValueError("Quadratic equation has no real solutions")
-    return (-b - np.sqrt(discriminant)) / (2 * a)
-
-
 def history_ts(
     mp: Market,
     investors: list[InvestorProvider],
@@ -96,44 +76,6 @@ def history_ts(
 
     ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
     return ts
-
-
-def calculate_quadratic_coefficients(
-    t: int,
-    ts: TimeSeries,
-) -> tuple[float, float, float]:
-    """Calculate coefficients for the quadratic equation determining the next price index.
-
-    The quadratic equation balances supply and demand in the market between different
-    investor types to determine the equilibrium price.
-
-    Args:
-        t: Current time step
-        ts: Time series data containing market and investor state
-
-    Returns:
-        tuple[float, float, float]: Coefficients (a, b, c) for the quadratic equation ax² + bx + c = 0
-    """
-    a = (
-        ts.investors[0].expected_return()[t]
-        * ts.investors[0].equity()[t - 1]
-        / (ts.price_idx[t - 1] * ts.investors[0].gamma() * ts.investors[0].sigma() ** 2)
-        - 1
-    )
-
-    b = ts.annualized_earnings[t] * ts.investors[1].equity()[t - 1] / (
-        ts.price_idx[t - 1] * ts.investors[1].gamma() * ts.investors[1].sigma() ** 2
-    ) + ts.investors[0].expected_return()[t] * ts.investors[0].cash_post_distribution()[t] / (
-        ts.investors[0].gamma() * ts.investors[0].sigma() ** 2
-    )
-
-    c = (
-        ts.annualized_earnings[t]
-        * ts.investors[1].cash_post_distribution()[t]
-        / (ts.investors[1].gamma() * ts.investors[1].sigma() ** 2)
-    )
-
-    return a, b, c
 
 
 def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
