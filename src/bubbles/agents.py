@@ -1,5 +1,5 @@
 """
-An equilibrium 2-agent model in which the interaction between investors with different return
+An equilibrium multi-agent model in which the interaction between investors with different return
 expectations produces a rich market dynamic that includes equity market volatility in excess of earnings volatility,
 short-term trends, long-term mean reversion, high trading volume, and bubbles and crashes.
 """
@@ -8,13 +8,15 @@ import numpy as np
 import polars as pl
 from scipy.optimize import root_scalar
 
-from bubbles.core import InvestorProvider, Market, TimeSeries, weighted_avg_returns, weights_5_36
+from bubbles.market import Market
+from bubbles.protocols import InvestorProvider
+from bubbles.timeseries import TimeSeries, weighted_avg_returns, weights_5_36
 
 SQRT_12 = np.sqrt(12)
 
 
 def history_ts(
-    mp: Market,
+    mkt: Market,
     investors: list[InvestorProvider],
 ) -> TimeSeries:
     """Generate historical time series data for market initialization.
@@ -24,29 +26,29 @@ def history_ts(
     and investor positions.
 
     Args:
-        mp: Market parameters
+        mkt: Market parameters
         investors: List of investor providers representing different trading strategies
 
     Returns:
         TimeSeries: Historical market data and investor positions
     """
-    history_months = 12 * mp.history_length
-    ts = TimeSeries.initialize(mp, investors)
+    history_months = 12 * mkt.history_length
+    ts = TimeSeries.initialize(mkt, investors)
 
     # Initialize `TimeSeries` for the `t = 1`
-    ts.monthly_earnings[1] = (1 + mp.initial_expected_return) ** (1 / 12) - 1
-    reinvested = ts.monthly_earnings[1] * (1 - mp.payout_ratio)
+    ts.monthly_earnings[1] = (1 + mkt.initial_expected_return) ** (1 / 12) - 1
+    reinvested = ts.monthly_earnings[1] * (1 - mkt.payout_ratio)
     ts.price_idx[1] = ts.price_idx[0] + reinvested
-    ts.annualized_earnings[1] = ts.annualize(mp, 1)
-    ts.return_idx[1] = ts.calculate_return_idx(mp, 1)
+    ts.annualized_earnings[1] = ts.annualize(mkt, 1)
+    ts.return_idx[1] = ts.calculate_return_idx(mkt, 1)
 
     # Initialize `TimeSeries` for the `t = 2` to `t = history_months`
     for t in range(2, history_months + 1):
-        ts.monthly_earnings[t] = ts.earnings(mp, reinvested, t)
-        reinvested = ts.monthly_earnings[t] * (1 - mp.payout_ratio)
+        ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
+        reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
         ts.price_idx[t] = ts.price_idx[t - 1] + reinvested
-        ts.annualized_earnings[t] = ts.annualize(mp, t)
-        ts.return_idx[t] = ts.calculate_return_idx(mp, t)
+        ts.annualized_earnings[t] = ts.annualize(mkt, t)
+        ts.return_idx[t] = ts.calculate_return_idx(mkt, t)
 
     ts.n_year_annualized_return[history_months] = (
         ts.annualized_earnings[history_months] / ts.price_idx[history_months]
@@ -83,7 +85,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
 
     Args:
         price: Proposed price index
-        t: Current time step
+        t: Current time
         ts: Time series data containing market and investor state
 
     Returns:
@@ -92,7 +94,9 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
     total_demand = 0
     for investor in ts.investors:
         # Calculate desired equity position for each investor
-        expected_return = investor.calculate_expected_return(t, ts, mkt, price)
+        expected_return = investor.calculate_expected_return(
+            t, ts.annualized_earnings[t], ts.n_year_annualized_return[t], mkt, price
+        )
         cash = investor.cash_post_distribution()[t]
         desired_equity = (
             expected_return * (cash + price * investor.equity()[t - 1] / ts.price_idx[t - 1])
@@ -108,6 +112,7 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
     Args:
         t: Current time
         ts: Time series data containing market and investor state
+        mkt: Market parameters
 
     Returns:
         float: Equilibrium price index
@@ -190,7 +195,7 @@ def data_table(
 
         for investor in investors:
             investor.expected_return()[t] = investor.calculate_expected_return(
-                t, ts, mkt, ts.price_idx[t]
+                t, ts.annualized_earnings[t], ts.n_year_annualized_return[t], mkt, ts.price_idx[t]
             )
             investor.wealth()[t] = (
                 investor.cash()[t - 1]
