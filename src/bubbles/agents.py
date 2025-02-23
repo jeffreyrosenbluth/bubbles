@@ -6,6 +6,7 @@ short-term trends, long-term mean reversion, high trading volume, and bubbles an
 
 import numpy as np
 import polars as pl
+from scipy.optimize import root_scalar
 
 from bubbles.core import InvestorProvider, Market, TimeSeries, weighted_avg_returns, weights_5_36
 
@@ -67,11 +68,6 @@ def history_ts(
         ts.annualized_earnings[t] = ts.annualize(mp, t)
         ts.return_idx[t] = ts.calculate_return_idx(mp, t)
 
-    for inv in ts.investors:
-        inv.expected_return()[history_months] = (
-            ts.annualized_earnings[history_months] / ts.price_idx[history_months]
-        )
-
     ts.n_year_annualized_return[history_months] = (
         ts.annualized_earnings[history_months] / ts.price_idx[history_months]
     )
@@ -89,10 +85,14 @@ def history_ts(
         inv.wealth()[history_months] = inv.percent() * starting_wealth
         inv.equity()[history_months] = (
             inv.wealth()[history_months]
-            * inv.expected_return()[history_months]
+            * ts.annualized_earnings[history_months]
+            / ts.price_idx[history_months]
             / (inv.gamma() * inv.sigma() ** 2)
         )
         inv.cash()[history_months] = inv.wealth()[history_months] - inv.equity()[history_months]
+        inv.expected_return()[history_months] = (
+            ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+        )
 
     ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
     return ts
@@ -136,8 +136,61 @@ def calculate_quadratic_coefficients(
     return a, b, c
 
 
+def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
+    """Calculate the excess demand at a given price.
+
+    Args:
+        price: Proposed price index
+        t: Current time step
+        ts: Time series data containing market and investor state
+
+    Returns:
+        float: Excess demand (positive means demand > supply)
+    """
+    total_demand = 0
+    for investor in ts.investors:
+        # Calculate desired equity position for each investor
+        expected_return = investor.calculate_expected_return(t, ts, mkt, price)
+        cash = investor.cash_post_distribution()[t]
+        desired_equity = (
+            expected_return * (cash + price * investor.equity()[t - 1] / ts.price_idx[t - 1])
+        ) / (investor.gamma() * investor.sigma() ** 2)
+        total_demand += desired_equity
+
+    return total_demand - price  # Supply is just the price
+
+
+def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
+    """Find the equilibrium price using numerical root finding.
+
+    Args:
+        t: Current time
+        ts: Time series data containing market and investor state
+
+    Returns:
+        float: Equilibrium price index
+    """
+    initial_guess = ts.price_idx[t - 1]
+
+    def objective(price):
+        return market_clearing_error(price, t, ts, mkt)
+
+    result = root_scalar(
+        objective,
+        x0=initial_guess,
+        x1=initial_guess * 1.1,
+        method="secant",
+        xtol=1e-6,
+    )
+
+    if not result.converged:
+        raise ValueError("Failed to find equilibrium price")
+
+    return result.root
+
+
 def data_table(
-    m: Market,
+    mkt: Market,
     investors: list[InvestorProvider],
 ) -> pl.DataFrame:
     """Simulate market dynamics and return results as a DataFrame.
@@ -165,48 +218,38 @@ def data_table(
             - Fair Value: Theoretical fair value based on earnings
     """
 
-    ts = history_ts(m, investors)
-    history_months = 12 * m.history_length
-    months = 12 * (m.years + m.history_length)
-    np.random.seed(m.seed)
+    ts = history_ts(mkt, investors)
+    history_months = 12 * mkt.history_length
+    months = 12 * (mkt.years + mkt.history_length)
+    np.random.seed(mkt.seed)
 
-    reinvested = ts.monthly_earnings[history_months] * (1 - m.payout_ratio)
+    reinvested = ts.monthly_earnings[history_months] * (1 - mkt.payout_ratio)
 
     for t in range(history_months + 1, months + 1):
-        ts.monthly_earnings[t] = ts.earnings(m, reinvested, t)
-        reinvested = ts.monthly_earnings[t] * (1 - m.payout_ratio)
-        ts.annualized_earnings[t] = ts.annualize(m, t)
-        ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * m.payout_ratio
+        ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
+        reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
+        ts.annualized_earnings[t] = ts.annualize(mkt, t)
+        ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * mkt.payout_ratio
         ts.n_year_annualized_return[t] = weighted_avg_returns(ts.return_idx, weights_5_36(), t)
 
         for investor in investors:
             investor.cash_post_distribution()[t] = (
                 investor.cash()[t - 1]
-                + (ts.monthly_earnings[t] * m.payout_ratio)
+                + (ts.monthly_earnings[t] * mkt.payout_ratio)
                 * investor.equity()[t - 1]
                 / ts.price_idx[t - 1]
             )
 
-        # Handle exprapolators expected return
-        squeeze = ts.investors[0].normalize_weights(
-            ts.n_year_annualized_return[t], m.initial_expected_return
-        )
-        ts.investors[0].expected_return()[t] = (
-            squeeze * ts.investors[0].speed_of_adjustment
-            + (1 - ts.investors[0].speed_of_adjustment) * ts.investors[0].expected_return()[t - 1]
-        )
-
-        ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(t, ts)
-        ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
-
-        # Handle Long-term investors expected return
-        ts.investors[1].expected_return()[t] = ts.annualized_earnings[t] / ts.price_idx[t]
+        ts.price_idx[t] = find_equilibrium_price(t, ts, mkt)
 
         ts.return_idx[t] = ts.return_idx[t - 1] * (
-            (ts.price_idx[t] + ts.monthly_earnings[t] * m.payout_ratio) / ts.price_idx[t - 1]
+            (ts.price_idx[t] + ts.monthly_earnings[t] * mkt.payout_ratio) / ts.price_idx[t - 1]
         )
 
         for investor in investors:
+            investor.expected_return()[t] = investor.calculate_expected_return(
+                t, ts, mkt, ts.price_idx[t]
+            )
             investor.wealth()[t] = (
                 investor.cash()[t - 1]
                 + investor.equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
@@ -218,7 +261,7 @@ def data_table(
             )
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
-        fair_value = ts.annualized_earnings / m.initial_expected_return
+        fair_value = ts.annualized_earnings / mkt.initial_expected_return
 
     # Return results as a Polars DataFrame
     return pl.DataFrame(

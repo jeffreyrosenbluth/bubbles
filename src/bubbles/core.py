@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import textwrap
 from dataclasses import dataclass
 from typing import NamedTuple, Protocol
@@ -97,11 +99,13 @@ class InvestorProvider(Protocol):
     def merton_share(self, excess_return: float) -> float:
         return excess_return / (self.gamma() * self.sigma() ** 2)
 
-    def expected_return(self) -> NDArray[np.float64]: ...
+    def calculate_expected_return(self, t: int, ts: TimeSeries, price: float) -> float: ...
+
     def wealth(self) -> NDArray[np.float64]: ...
     def equity(self) -> NDArray[np.float64]: ...
     def cash(self) -> NDArray[np.float64]: ...
     def cash_post_distribution(self) -> NDArray[np.float64]: ...
+    def expected_return(self) -> NDArray[np.float64]: ...
 
 
 class InvestorParameters(NamedTuple):
@@ -202,14 +206,14 @@ class InvestorBase:
     def wealth(self) -> NDArray[np.float64]:
         return self.stats.wealth
 
-    def expected_return(self) -> NDArray[np.float64]:
-        return self.stats.expected_return
-
     def equity(self) -> NDArray[np.float64]:
         return self.stats.equity
 
     def cash(self) -> NDArray[np.float64]:
         return self.stats.cash
+
+    def expected_return(self) -> NDArray[np.float64]:
+        return self.stats.expected_return
 
     def cash_post_distribution(self) -> NDArray[np.float64]:
         return self.stats.cash_post_distribution
@@ -248,6 +252,15 @@ class Extrapolator(InvestorBase):
             squeezing=0.1,
         )
 
+    def calculate_expected_return(self, t: int, ts: TimeSeries, mkt: Market, price: float) -> float:
+        squeeze = self.squeeze_target + self.max_deviation * np.tanh(
+            (ts.n_year_annualized_return[t] - mkt.initial_expected_return) / self.squeezing
+        )
+        return (
+            squeeze * self.speed_of_adjustment
+            + (1 - self.speed_of_adjustment) * self.expected_return()[t - 1]
+        )
+
     def __repr__(self) -> str:
         weights_str = np.array2string(self.weights, precision=3, separator=", ")
 
@@ -275,22 +288,6 @@ class Extrapolator(InvestorBase):
             f"{textwrap.indent(repr(self.params), '  ')}\n"
         )
 
-    def normalize_weights(
-        self, n_year_annualized_return: float, initial_expected_return: float
-    ) -> float:
-        """Normalize returns using a hyperbolic tangent transformation.
-
-        Args:
-            n_year_annualized_return: The n-year annualized return rate
-            initial_expected_return: The starting expected return rate
-
-        Returns:
-            Normalized return rate bounded by squeeze_target ± max_deviation
-        """
-        return self.squeeze_target + self.max_deviation * np.tanh(
-            (n_year_annualized_return - initial_expected_return) / self.squeezing
-        )
-
 
 @dataclass
 class LongTermInvestor(InvestorBase):
@@ -304,6 +301,9 @@ class LongTermInvestor(InvestorBase):
     @classmethod
     def new(cls) -> "LongTermInvestor":
         return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
+
+    def calculate_expected_return(self, t: int, ts: TimeSeries, mkt: Market, price: float) -> float:
+        return ts.annualized_earnings[t] / price
 
     def __repr__(self) -> str:
         def safe_mean(arr: NDArray[np.float64]) -> str:
