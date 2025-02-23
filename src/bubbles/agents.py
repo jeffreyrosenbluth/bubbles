@@ -77,14 +77,12 @@ def history_ts(
     )
 
     current_return = ts.annualized_earnings[history_months] / ts.price_idx[history_months]
-    merton_sum = 0
-
-    for inv in ts.investors:
-        # Calculate sum for starting_wealth denominator
-        merton_sum += inv.percent() * inv.merton_share(current_return)
+    total_percent_equity = sum(
+        inv.percent() * inv.merton_share(current_return) for inv in ts.investors
+    )
 
     # Calculate starting_wealth after we have the complete sum
-    starting_wealth = ts.price_idx[history_months] / merton_sum
+    starting_wealth = ts.price_idx[history_months] / total_percent_equity
 
     for inv in ts.investors:
         # Calculate investor positions
@@ -180,13 +178,6 @@ def data_table(
         ts.annualized_earnings[t] = ts.annualize(m, t)
         ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * m.payout_ratio
         ts.n_year_annualized_return[t] = weighted_avg_returns(ts.return_idx, weights_5_36(), t)
-        ts.squeeze[t] = ts.investors[0].normalize_weights(
-            ts.n_year_annualized_return[t], m.initial_expected_return
-        )
-        ts.investors[0].expected_return()[t] = (
-            ts.squeeze[t] * ts.investors[0].speed_of_adjustment
-            + (1 - ts.investors[0].speed_of_adjustment) * ts.investors[0].expected_return()[t - 1]
-        )
 
         for investor in investors:
             investor.cash_post_distribution()[t] = (
@@ -196,9 +187,21 @@ def data_table(
                 / ts.price_idx[t - 1]
             )
 
+        # Handle exprapolators expected return
+        squeeze = ts.investors[0].normalize_weights(
+            ts.n_year_annualized_return[t], m.initial_expected_return
+        )
+        ts.investors[0].expected_return()[t] = (
+            squeeze * ts.investors[0].speed_of_adjustment
+            + (1 - ts.investors[0].speed_of_adjustment) * ts.investors[0].expected_return()[t - 1]
+        )
+
         ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(t, ts)
         ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
+
+        # Handle Long-term investors expected return
         ts.investors[1].expected_return()[t] = ts.annualized_earnings[t] / ts.price_idx[t]
+
         ts.return_idx[t] = ts.return_idx[t - 1] * (
             (ts.price_idx[t] + ts.monthly_earnings[t] * m.payout_ratio) / ts.price_idx[t - 1]
         )

@@ -43,7 +43,7 @@ class Market(NamedTuple):
         )
 
 
-def weights_5_36(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
+def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
     """Generate exponentially decaying weights for return calculations.
 
     Args:
@@ -53,12 +53,13 @@ def weights_5_36(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
     Returns:
         Normalized array of weights that sum to 1.0
     """
-    ws = [start_weight * (0.75**i) for i in range(n)]
-    s = sum(ws)
-    return np.array([w / s for w in ws])
+    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
+    return ws / ws.sum()
 
 
-def weighted_avg_returns(return_idx: np.ndarray, weights: np.ndarray, t: int) -> float:
+def weighted_avg_returns(
+    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
+) -> float:
     """Calculate weighted average of historical returns.
 
     Args:
@@ -69,12 +70,9 @@ def weighted_avg_returns(return_idx: np.ndarray, weights: np.ndarray, t: int) ->
     Returns:
         Weighted average of returns over the specified period
     """
-    indices = [t - i * 12 - 1 for i in range(len(weights) + 1)]
+    indices = t - np.arange(len(weights) + 1) * 12 - 1
     returns_slice = return_idx[indices]
-    result = 0
-    for i in range(len(weights)):
-        result += weights[i] * (returns_slice[i] / returns_slice[i + 1] - 1)
-    return result
+    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
 
 
 class InvestorProvider(Protocol):
@@ -167,7 +165,7 @@ class InvestorStats:
         )
 
     def __repr__(self) -> str:
-        def array_stats(arr: np.ndarray) -> str:
+        def array_stats(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "no valid data"
@@ -201,19 +199,19 @@ class InvestorBase:
     def sigma(self) -> float:
         return self.params.sigma
 
-    def wealth(self) -> np.ndarray[float]:
+    def wealth(self) -> NDArray[np.float64]:
         return self.stats.wealth
 
-    def expected_return(self) -> np.ndarray[float]:
+    def expected_return(self) -> NDArray[np.float64]:
         return self.stats.expected_return
 
-    def equity(self) -> np.ndarray[float]:
+    def equity(self) -> NDArray[np.float64]:
         return self.stats.equity
 
-    def cash(self) -> np.ndarray[float]:
+    def cash(self) -> NDArray[np.float64]:
         return self.stats.cash
 
-    def cash_post_distribution(self) -> np.ndarray[float]:
+    def cash_post_distribution(self) -> NDArray[np.float64]:
         return self.stats.cash_post_distribution
 
     def merton_share(self, excess_return: float) -> float:
@@ -232,7 +230,7 @@ class Extrapolator(InvestorBase):
         squeezing: Scaling factor for return normalization
     """
 
-    weights: np.ndarray
+    weights: NDArray[np.float64]
     speed_of_adjustment: float
     squeeze_target: float
     max_deviation: float
@@ -253,13 +251,13 @@ class Extrapolator(InvestorBase):
     def __repr__(self) -> str:
         weights_str = np.array2string(self.weights, precision=3, separator=", ")
 
-        def safe_mean(arr: np.ndarray) -> str:
+        def safe_mean(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "N/A"
             return f"{np.nanmean(arr[valid]):.2f}"
 
-        def safe_mean_pct(arr: np.ndarray) -> str:
+        def safe_mean_pct(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "N/A"
@@ -308,13 +306,13 @@ class LongTermInvestor(InvestorBase):
         return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
 
     def __repr__(self) -> str:
-        def safe_mean(arr: np.ndarray) -> str:
+        def safe_mean(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "N/A"
             return f"{np.nanmean(arr[valid]):.2f}"
 
-        def safe_mean_pct(arr: np.ndarray) -> str:
+        def safe_mean_pct(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "N/A"
@@ -333,7 +331,6 @@ class TimeSeries(NamedTuple):
         return_idx: Return index
         total_cash: Total cash in system
         investors: List of investors
-        squeeze: Squeeze metric over time
         n_year_annualized_return: N-year annualized returns
         a, b, c: Intermediate calculation values
         dz: Random shock values
@@ -345,7 +342,6 @@ class TimeSeries(NamedTuple):
     return_idx: NDArray[np.float64]
     total_cash: NDArray[np.float64]
     investors: list[InvestorProvider]
-    squeeze: NDArray[np.float64]
     n_year_annualized_return: NDArray[np.float64]
     a: NDArray[np.float64]
     b: NDArray[np.float64]
@@ -372,7 +368,6 @@ class TimeSeries(NamedTuple):
             return_idx=np.ones(n),  # Initialize to ones
             total_cash=np.full(n, np.nan, dtype=float),
             investors=investors,  # Initialize with empty list
-            squeeze=np.full(n, np.nan, dtype=float),
             n_year_annualized_return=np.full(n, np.nan, dtype=float),
             a=np.full(n, np.nan, dtype=float),
             b=np.full(n, np.nan, dtype=float),
@@ -462,7 +457,7 @@ class TimeSeries(NamedTuple):
         return pl.DataFrame(data)
 
     def __repr__(self) -> str:
-        def array_stats(arr: np.ndarray) -> str:
+        def array_stats(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
             if not np.any(valid):
                 return "no valid data"
