@@ -1,13 +1,16 @@
-from dataclasses import field
-from typing import NamedTuple
+import textwrap
+from dataclasses import dataclass
+from typing import NamedTuple, Protocol
 
 import numpy as np
 import polars as pl
 
 from bubbles.dz import dz
 
+SQRT_12 = np.sqrt(12)
 
-class MarketParameters(NamedTuple):
+
+class Market(NamedTuple):
     """Global parameters for market simulation.
 
     Attributes:
@@ -39,7 +42,7 @@ class MarketParameters(NamedTuple):
         )
 
 
-def return_weights(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
+def weights_5_36(start_weight: float = 36.0, n: int = 5) -> np.ndarray:
     """Generate exponentially decaying weights for return calculations.
 
     Args:
@@ -73,76 +76,60 @@ def weighted_avg_returns(return_idx: np.ndarray, weights: np.ndarray, t: int) ->
     return result
 
 
+class InvestorProvider(Protocol):
+    """Protocol defining the interface for investor types.
+
+    Methods:
+        get_percent: Returns the investor's percentage of total market
+        get_gamma: Returns the investor's risk aversion parameter
+        get_sigma: Returns the investor's volatility parameter
+        merton_share: Calculates optimal portfolio share based on Merton's formula
+        get_expected_return: Returns array of expected returns over time
+        get_wealth: Returns array of total wealth over time
+        get_equity: Returns array of equity holdings over time
+        get_cash: Returns array of cash holdings over time
+        get_cash_post_distribution: Returns array of cash positions after distributions
+    """
+
+    def get_percent(self) -> float: ...
+    def get_gamma(self) -> float: ...
+    def get_sigma(self) -> float: ...
+
+    def merton_share(self, excess_return: float) -> float:
+        return excess_return / (self.get_gamma() * self.get_sigma() ** 2)
+
+    def get_expected_return(self) -> np.ndarray[float]: ...
+    def get_wealth(self) -> np.ndarray[float]: ...
+    def get_equity(self) -> np.ndarray[float]: ...
+    def get_cash(self) -> np.ndarray[float]: ...
+    def get_cash_post_distribution(self) -> np.ndarray[float]: ...
+
+
 class InvestorParameters(NamedTuple):
-    """Parameters defining investor behavior.
+    """Parameters defining an investor's characteristics.
 
     Attributes:
-        percent: Investment allocation percentage
+        percent: Investor's percentage of total market
         gamma: Risk aversion parameter
         sigma: Volatility parameter
-        weights: Optional custom weights for return calculations
-        speed_of_adjustment: Optional parameter for return expectation adjustments
     """
 
     percent: float = 0.5
     gamma: float = 3.0
     sigma: float = 0.16
-    weights: np.ndarray | None = None  # field(default_factory=return_weights)
-    speed_of_adjustment: float | None = None  # 0.1
 
     def __repr__(self) -> str:
-        weights_str = "None"
-        if self.weights is not None:
-            if callable(self.weights):
-                weights = self.weights()
-                weights_str = np.array2string(weights, precision=3)
-            else:
-                weights_str = np.array2string(self.weights, precision=3)
-        speed_of_adjustment_str = (
-            "None" if self.speed_of_adjustment is None else str(self.speed_of_adjustment)
-        )
         return (
             f"Investor Parameters\n"
-            f"--------------------\n"
+            f"-----------------\n"
             f"  percent: {self.percent:.2%}\n"
-            f"  gamma: {self.gamma:.2}\n"
-            f"  volatility: {self.sigma:.2%}\n"
-            f"  weights: {weights_str}\n"
-            f"  speed of adjustment: {speed_of_adjustment_str}\n"
+            f"  gamma: {self.gamma:.2f}\n"
+            f"  sigma: {self.sigma:.2%}\n"
         )
 
-    def get_gamma(self) -> float:
-        return self.gamma
 
-    def get_sigma(self) -> float:
-        return self.sigma
-
-
-class ExtrapolatorParameters(NamedTuple):
-    ip: InvestorParameters = InvestorParameters()
-    weights: np.ndarray[float] = field(default_factory=return_weights)
-    speed_of_adjustment: float = 0.1
-    squeeze_target: float = 0.04
-    max_deviation: float = 0.04
-    squeezing: float = 0.1
-
-    def get_gamma(self) -> float:
-        return self.ip.gamma
-
-    def get_sigma(self) -> float:
-        return self.ip.sigma
-
-    # def __repr__(self) -> str:
-    #     return (
-    #         f"Squeeze Parameters\n"
-    #         f"-------------------\n"
-    #         f"  squeeze target: {self.squeeze_target:.2%}\n"
-    #         f"  max deviation: {self.max_deviation:.2%}\n"
-    #         f"  squeezing: {self.squeezing:.2%}\n"
-    #     )
-
-
-class Investor(NamedTuple):
+@dataclass
+class InvestorStats:
     """Container for investor-specific time series data.
 
     Attributes:
@@ -159,24 +146,204 @@ class Investor(NamedTuple):
     cash: np.ndarray[float]
     cash_post_distribution: np.ndarray[float]
 
+    @classmethod
+    def initialize(cls, m: Market) -> "InvestorStats":
+        """Create a new InvestorStats instance with arrays initialized to NaN.
 
-def initialize_investor(m: MarketParameters) -> Investor:
-    """Create a new Investor instance with arrays initialized to NaN.
+        Args:
+            m: Market parameters defining simulation length
 
-    Args:
-        m: Market parameters defining simulation length
+        Returns:
+            New InvestorStats instance with appropriately sized arrays
+        """
+        n = 12 * (m.years + m.history_length) + 1
+        return cls(
+            wealth=np.full(n, np.nan, dtype=float),
+            expected_return=np.full(n, np.nan, dtype=float),
+            equity=np.full(n, np.nan, dtype=float),
+            cash=np.full(n, np.nan, dtype=float),
+            cash_post_distribution=np.full(n, np.nan, dtype=float),
+        )
 
-    Returns:
-        New Investor instance with appropriately sized arrays
+    def __repr__(self) -> str:
+        def array_stats(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "no valid data"
+            data = arr[valid]
+            return f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+
+        return (
+            f"Investor Stats (length: {len(self.wealth)})\n"
+            f"------------------------------------\n"
+            f"  wealth: {array_stats(self.wealth)}\n"
+            f"  expected_return: {array_stats(self.expected_return)}\n"
+            f"  equity: {array_stats(self.equity)}\n"
+            f"  cash: {array_stats(self.cash)}\n"
+            f"  cash_post_distribution: {array_stats(self.cash_post_distribution)}\n\n"
+        )
+
+
+class Extrapolator(NamedTuple):
+    """An investor type that extrapolates returns from historical data.
+
+    Attributes:
+        params: Basic investor parameters
+        stats: Time series statistics for this investor
+        weights: Array of weights for historical return calculation
+        speed_of_adjustment: Rate at which expectations adjust to new information
+        squeeze_target: Target return rate for normalization
+        max_deviation: Maximum allowed deviation from squeeze target
+        squeezing: Scaling factor for return normalization
     """
-    n = 12 * (m.years + m.history_length) + 1
-    return Investor(
-        wealth=np.full(n, np.nan, dtype=float),
-        expected_return=np.full(n, np.nan, dtype=float),
-        equity=np.full(n, np.nan, dtype=float),
-        cash=np.full(n, np.nan, dtype=float),
-        cash_post_distribution=np.full(n, np.nan, dtype=float),
-    )
+
+    params: InvestorParameters
+    stats: InvestorStats
+    weights: np.ndarray
+    speed_of_adjustment: float
+    squeeze_target: float
+    max_deviation: float
+    squeezing: float
+
+    @classmethod
+    def create(cls) -> "Extrapolator":
+        return cls(
+            params=InvestorParameters(),
+            stats=InvestorStats.initialize(Market()),
+            weights=weights_5_36(),
+            speed_of_adjustment=0.1,
+            squeeze_target=0.04,
+            max_deviation=0.04,
+            squeezing=0.1,
+        )
+
+    def __repr__(self) -> str:
+        weights_str = np.array2string(self.weights, precision=3, separator=", ")
+
+        def safe_mean(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "N/A"
+            return f"{np.nanmean(arr[valid]):.2f}"
+
+        def safe_mean_pct(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "N/A"
+            return f"{np.nanmean(arr[valid]):.2%}"
+
+        return (
+            f"Extrapolator\n"
+            f"-----------\n"
+            f"Parameters:\n"
+            f"  speed_of_adjustment: {self.speed_of_adjustment:.3f}\n"
+            f"  squeeze_target: {self.squeeze_target:.2%}\n"
+            f"  max_deviation: {self.max_deviation:.2%}\n"
+            f"  squeezing: {self.squeezing:.3f}\n"
+            f"  weights: {weights_str}\n\n"
+            f"{textwrap.indent(repr(self.params), '  ')}\n"
+        )
+
+    def get_percent(self) -> float:
+        return self.params.percent
+
+    def get_gamma(self) -> float:
+        return self.params.gamma
+
+    def get_sigma(self) -> float:
+        return self.params.sigma
+
+    def get_wealth(self) -> np.ndarray[float]:
+        return self.stats.wealth
+
+    def get_expected_return(self) -> np.ndarray[float]:
+        return self.stats.expected_return
+
+    def get_equity(self) -> np.ndarray[float]:
+        return self.stats.equity
+
+    def get_cash(self) -> np.ndarray[float]:
+        return self.stats.cash
+
+    def get_cash_post_distribution(self) -> np.ndarray[float]:
+        return self.stats.cash_post_distribution
+
+    def normalize_weights(
+        self, n_year_annualized_return: float, initial_expected_return: float
+    ) -> float:
+        """Normalize returns using a hyperbolic tangent transformation.
+
+        Args:
+            n_year_annualized_return: The n-year annualized return rate
+            initial_expected_return: The starting expected return rate
+
+        Returns:
+            Normalized return rate bounded by squeeze_target ± max_deviation
+        """
+        return self.squeeze_target + self.max_deviation * np.tanh(
+            (n_year_annualized_return - initial_expected_return) / self.squeezing
+        )
+
+    def merton_share(self, excess_return: float) -> float:
+        return InvestorProvider.merton_share(self, excess_return)
+
+
+class LongTermInvestor(NamedTuple):
+    """An investor type that maintains constant return expectations.
+
+    Attributes:
+        params: Basic investor parameters
+        stats: Time series statistics for this investor
+    """
+
+    params: InvestorParameters
+    stats: InvestorStats
+
+    @classmethod
+    def create(cls) -> "LongTermInvestor":
+        return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
+
+    def __repr__(self) -> str:
+        def safe_mean(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "N/A"
+            return f"{np.nanmean(arr[valid]):.2f}"
+
+        def safe_mean_pct(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "N/A"
+            return f"{np.nanmean(arr[valid]):.2%}"
+
+        return f"LongTermInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
+
+    def get_percent(self) -> float:
+        return self.params.percent
+
+    def get_gamma(self) -> float:
+        return self.params.gamma
+
+    def get_sigma(self) -> float:
+        return self.params.sigma
+
+    def get_wealth(self) -> np.ndarray[float]:
+        return self.stats.wealth
+
+    def get_expected_return(self) -> np.ndarray[float]:
+        return self.stats.expected_return
+
+    def get_equity(self) -> np.ndarray[float]:
+        return self.stats.equity
+
+    def get_cash(self) -> np.ndarray[float]:
+        return self.stats.cash
+
+    def get_cash_post_distribution(self) -> np.ndarray[float]:
+        return self.stats.cash_post_distribution
+
+    def merton_share(self, excess_return: float) -> float:
+        return InvestorProvider.merton_share(self, excess_return)
 
 
 class TimeSeries(NamedTuple):
@@ -188,89 +355,165 @@ class TimeSeries(NamedTuple):
         annualized_earnings: Annualized earnings
         return_idx: Return index
         total_cash: Total cash in system
-        investor_x: First investor's data
-        investor_y: Second investor's data
+        investors: List of investors
         squeeze: Squeeze metric over time
         n_year_annualized_return: N-year annualized returns
         a, b, c: Intermediate calculation values
         dz: Random shock values
     """
 
-    monthly_earnings: np.ndarray[float]
-    price_idx: np.ndarray[float]
-    annualized_earnings: np.ndarray[float]
-    return_idx: np.ndarray[float]
-    total_cash: np.ndarray[float]
-    investor_x: Investor
-    investor_y: Investor
-    squeeze: np.ndarray[float]
-    n_year_annualized_return: np.ndarray[float]
-    a: np.ndarray[float]
-    b: np.ndarray[float]
-    c: np.ndarray[float]
-    dz: np.ndarray[float]
+    monthly_earnings: np.ndarray
+    price_idx: np.ndarray
+    annualized_earnings: np.ndarray
+    return_idx: np.ndarray
+    total_cash: np.ndarray
+    investors: list[InvestorProvider]
+    squeeze: np.ndarray
+    n_year_annualized_return: np.ndarray
+    a: np.ndarray
+    b: np.ndarray
+    c: np.ndarray
+    dz: np.ndarray
 
+    @classmethod
+    def initialize(cls, mkt: Market, investors: list[InvestorProvider]) -> "TimeSeries":
+        """Create a new TimeSeries instance with initialized arrays.
 
-def initialize_time_series(
-    m: MarketParameters,
-) -> TimeSeries:
-    """Create a new TimeSeries instance with initialized arrays.
+        Args:
+            m: Market parameters defining simulation length
 
-    Args:
-        m: Market parameters defining simulation length
+        Returns:
+            New TimeSeries instance with appropriately sized arrays
+        """
+        n = 12 * (mkt.years + mkt.history_length) + 1
+        dz_zero = dz.copy()
+        dz_zero[: mkt.history_length * 12 + 1] = 0
+        return cls(
+            monthly_earnings=np.full(n, np.nan, dtype=float),
+            price_idx=np.ones(n),  # Initialize to ones
+            annualized_earnings=np.full(n, np.nan, dtype=float),
+            return_idx=np.ones(n),  # Initialize to ones
+            total_cash=np.full(n, np.nan, dtype=float),
+            investors=investors,  # Initialize with empty list
+            squeeze=np.full(n, np.nan, dtype=float),
+            n_year_annualized_return=np.full(n, np.nan, dtype=float),
+            a=np.full(n, np.nan, dtype=float),
+            b=np.full(n, np.nan, dtype=float),
+            c=np.full(n, np.nan, dtype=float),
+            dz=dz_zero,
+        )
 
-    Returns:
-        New TimeSeries instance with appropriately sized arrays
-    """
-    n = 12 * (m.years + m.history_length) + 1
-    return TimeSeries(
-        monthly_earnings=np.full(n, np.nan, dtype=float),
-        price_idx=np.ones(n),
-        annualized_earnings=np.full(n, np.nan, dtype=float),
-        return_idx=np.ones(n),
-        total_cash=np.full(n, np.nan, dtype=float),
-        squeeze=np.full(n, np.nan, dtype=float),
-        investor_x=initialize_investor(m),
-        investor_y=initialize_investor(m),
-        n_year_annualized_return=np.full(n, np.nan, dtype=float),
-        a=np.full(n, np.nan, dtype=float),
-        b=np.full(n, np.nan, dtype=float),
-        c=np.full(n, np.nan, dtype=float),
-        dz=dz.copy(),
-    )
+    def earnings(self, mkt: Market, reinvested: float, t: int) -> float:
+        """Calculate earnings for the current period.
 
+        Args:
+            mkt: Market parameters
+            reinvested: Amount of earnings reinvested
+            t: Current time index
 
-def to_df(ts: TimeSeries) -> pl.DataFrame:
-    """Convert a TimeSeries instance to a Polars DataFrame.
+        Returns:
+            Earnings value for current period
+        """
+        return (
+            self.monthly_earnings[t - 1]
+            * (1 + reinvested / self.price_idx[t - 1])
+            * (1 + self.dz[t] * mkt.earnings_vol / SQRT_12)
+        )
 
-    Args:
-        ts: TimeSeries instance containing the simulation data
+    def annualize(self, mkt: Market, t: int) -> float:
+        """Convert monthly earnings to annualized value.
 
-    Returns:
-        Polars DataFrame with all TimeSeries arrays as columns
-    """
-    return pl.DataFrame(
-        {
-            "annualized_earnings": ts.annualized_earnings,
-            "monthly_earnings": ts.monthly_earnings,
-            "return_idx": ts.return_idx,
-            "price_idx": ts.price_idx,
-            "total_cash": ts.total_cash,
-            "expected_return_x": ts.investor_x.expected_return,
-            "expected_return_y": ts.investor_y.expected_return,
-            "squeeze": ts.squeeze,
-            "wealth_x": ts.investor_x.wealth,
-            "wealth_y": ts.investor_y.wealth,
-            "equity_x": ts.investor_x.equity,
-            "equity_y": ts.investor_y.equity,
-            "cash_x": ts.investor_x.cash,
-            "cash_y": ts.investor_y.cash,
-            "cash_post_distribution_x": ts.investor_x.cash_post_distribution,
-            "cash_post_distribution_y": ts.investor_y.cash_post_distribution,
-            "n_year_annualized_return": ts.n_year_annualized_return,
-            "a": ts.a,
-            "b": ts.b,
-            "c": ts.c,
-            "dz": ts.dz,
+        Args:
+            mkt: Market parameters
+            t: Current time index
+
+        Returns:
+            Annualized earnings value
+        """
+        return ((1 + self.monthly_earnings[t] / self.price_idx[t - 1]) ** 12 - 1) * self.price_idx[
+            t - 1
+        ]
+
+    def calculate_return_idx(self, mkt: Market, t: int) -> float:
+        """Calculate return index including both price changes and dividends.
+
+        Args:
+            mkt: Market parameters
+            t: Current time index
+
+        Returns:
+            Updated return index value
+        """
+        return self.return_idx[t - 1] * (
+            (self.price_idx[t] + self.monthly_earnings[t] * mkt.payout_ratio)
+            / self.price_idx[t - 1]
+        )
+
+    def to_df(self) -> pl.DataFrame:
+        """Convert this TimeSeries instance to a Polars DataFrame.
+
+        Returns:
+            Polars DataFrame with all TimeSeries arrays as columns
+        """
+        data = {
+            "annualized_earnings": self.annualized_earnings,
+            "monthly_earnings": self.monthly_earnings,
+            "return_idx": self.return_idx,
+            "price_idx": self.price_idx,
+            "total_cash": self.total_cash,
+            "squeeze": self.squeeze,
+            "n_year_annualized_return": self.n_year_annualized_return,
+            "a": self.a,
+            "b": self.b,
+            "c": self.c,
+            "dz": self.dz,
         }
-    )
+
+        # Add data for each investor
+        for i, investor in enumerate(self.investors):
+            suffix = f"_{i}"
+            data.update(
+                {
+                    f"expected_return{suffix}": investor.get_expected_return(),
+                    f"wealth{suffix}": investor.get_wealth(),
+                    f"equity{suffix}": investor.get_equity(),
+                    f"cash{suffix}": investor.get_cash(),
+                    f"cash_post_distribution{suffix}": investor.get_cash_post_distribution(),
+                }
+            )
+
+        return pl.DataFrame(data)
+
+    def __repr__(self) -> str:
+        def array_stats(arr: np.ndarray) -> str:
+            valid = ~np.isnan(arr)
+            if not np.any(valid):
+                return "no valid data"
+            data = arr[valid]
+            return f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+
+        n = len(self.price_idx)
+        investors_str = "\n".join(
+            f"  Investor {i}:\n{textwrap.indent(repr(inv), '    ')}"
+            for i, inv in enumerate(self.investors, 1)
+        )
+
+        return (
+            f"TimeSeries (length: {n})\n"
+            f"---------------------\n"
+            f"Market Data:\n"
+            f"  monthly_earnings: {array_stats(self.monthly_earnings)}\n"
+            f"  price_idx: {array_stats(self.price_idx)}\n"
+            f"  annualized_earnings: {array_stats(self.annualized_earnings)}\n"
+            f"  return_idx: {array_stats(self.return_idx)}\n"
+            f"  total_cash: {array_stats(self.total_cash)}\n"
+            f"  squeeze: {array_stats(self.squeeze)}\n"
+            f"  n_year_annualized_return: {array_stats(self.n_year_annualized_return)}\n\n"
+            f"Calculation Values:\n"
+            f"  a: {array_stats(self.a)}\n"
+            f"  b: {array_stats(self.b)}\n"
+            f"  c: {array_stats(self.c)}\n"
+            f"  dz: {array_stats(self.dz)}\n\n"
+            f"Investors:\n"
+            f"{investors_str}\n"
+        )
