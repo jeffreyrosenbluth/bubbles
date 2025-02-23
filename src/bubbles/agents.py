@@ -52,12 +52,14 @@ def history_ts(
     history_months = 12 * mp.history_length
     ts = TimeSeries.initialize(mp, investors)
 
+    # Initialize `TimeSeries` for the `t = 1`
     ts.monthly_earnings[1] = (1 + mp.initial_expected_return) ** (1 / 12) - 1
     reinvested = ts.monthly_earnings[1] * (1 - mp.payout_ratio)
     ts.price_idx[1] = ts.price_idx[0] + reinvested
     ts.annualized_earnings[1] = ts.annualize(mp, 1)
     ts.return_idx[1] = ts.calculate_return_idx(mp, 1)
 
+    # Initialize `TimeSeries` for the `t = 2` to `t = history_months`
     for t in range(2, history_months + 1):
         ts.monthly_earnings[t] = ts.earnings(mp, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mp.payout_ratio)
@@ -66,7 +68,7 @@ def history_ts(
         ts.return_idx[t] = ts.calculate_return_idx(mp, t)
 
     for inv in ts.investors:
-        inv.get_expected_return()[history_months] = (
+        inv.expected_return()[history_months] = (
             ts.annualized_earnings[history_months] / ts.price_idx[history_months]
         )
 
@@ -74,24 +76,27 @@ def history_ts(
         ts.annualized_earnings[history_months] / ts.price_idx[history_months]
     )
 
-    starting_wealth = ts.price_idx[history_months] / sum(
-        inv.get_percent()
-        * inv.merton_share(ts.annualized_earnings[history_months] / ts.price_idx[history_months])
-        for inv in ts.investors
-    )
-
-    ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
+    current_return = ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+    merton_sum = 0
 
     for inv in ts.investors:
-        inv.get_wealth()[history_months] = inv.get_percent() * starting_wealth
-        inv.get_equity()[history_months] = (
-            inv.get_wealth()[history_months]
-            * inv.get_expected_return()[history_months]
-            / (inv.get_gamma() * inv.get_sigma() ** 2)
+        # Calculate sum for starting_wealth denominator
+        merton_sum += inv.percent() * inv.merton_share(current_return)
+
+    # Calculate starting_wealth after we have the complete sum
+    starting_wealth = ts.price_idx[history_months] / merton_sum
+
+    for inv in ts.investors:
+        # Calculate investor positions
+        inv.wealth()[history_months] = inv.percent() * starting_wealth
+        inv.equity()[history_months] = (
+            inv.wealth()[history_months]
+            * inv.expected_return()[history_months]
+            / (inv.gamma() * inv.sigma() ** 2)
         )
-        inv.get_cash()[history_months] = (
-            inv.get_wealth()[history_months] - inv.get_equity()[history_months]
-        )
+        inv.cash()[history_months] = inv.wealth()[history_months] - inv.equity()[history_months]
+
+    ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
     return ts
 
 
@@ -112,22 +117,22 @@ def calculate_quadratic_coefficients(
         tuple[float, float, float]: Coefficients (a, b, c) for the quadratic equation ax² + bx + c = 0
     """
     a = (
-        ts.investors[0].get_expected_return()[t]
-        * ts.investors[0].get_equity()[t - 1]
-        / (ts.price_idx[t - 1] * ts.investors[0].get_gamma() * ts.investors[0].get_sigma() ** 2)
+        ts.investors[0].expected_return()[t]
+        * ts.investors[0].equity()[t - 1]
+        / (ts.price_idx[t - 1] * ts.investors[0].gamma() * ts.investors[0].sigma() ** 2)
         - 1
     )
 
-    b = ts.annualized_earnings[t] * ts.investors[1].get_equity()[t - 1] / (
-        ts.price_idx[t - 1] * ts.investors[1].get_gamma() * ts.investors[1].get_sigma() ** 2
-    ) + ts.investors[0].get_expected_return()[t] * ts.investors[0].get_cash_post_distribution()[
-        t
-    ] / (ts.investors[0].get_gamma() * ts.investors[0].get_sigma() ** 2)
+    b = ts.annualized_earnings[t] * ts.investors[1].equity()[t - 1] / (
+        ts.price_idx[t - 1] * ts.investors[1].gamma() * ts.investors[1].sigma() ** 2
+    ) + ts.investors[0].expected_return()[t] * ts.investors[0].cash_post_distribution()[t] / (
+        ts.investors[0].gamma() * ts.investors[0].sigma() ** 2
+    )
 
     c = (
         ts.annualized_earnings[t]
-        * ts.investors[1].get_cash_post_distribution()[t]
-        / (ts.investors[1].get_gamma() * ts.investors[1].get_sigma() ** 2)
+        * ts.investors[1].cash_post_distribution()[t]
+        / (ts.investors[1].gamma() * ts.investors[1].sigma() ** 2)
     )
 
     return a, b, c
@@ -178,38 +183,37 @@ def data_table(
         ts.squeeze[t] = ts.investors[0].normalize_weights(
             ts.n_year_annualized_return[t], m.initial_expected_return
         )
-        ts.investors[0].get_expected_return()[t] = (
+        ts.investors[0].expected_return()[t] = (
             ts.squeeze[t] * ts.investors[0].speed_of_adjustment
-            + (1 - ts.investors[0].speed_of_adjustment)
-            * ts.investors[0].get_expected_return()[t - 1]
+            + (1 - ts.investors[0].speed_of_adjustment) * ts.investors[0].expected_return()[t - 1]
         )
 
         for investor in investors:
-            investor.get_cash_post_distribution()[t] = (
-                investor.get_cash()[t - 1]
+            investor.cash_post_distribution()[t] = (
+                investor.cash()[t - 1]
                 + (ts.monthly_earnings[t] * m.payout_ratio)
-                * investor.get_equity()[t - 1]
+                * investor.equity()[t - 1]
                 / ts.price_idx[t - 1]
             )
 
         ts.a[t], ts.b[t], ts.c[t] = calculate_quadratic_coefficients(t, ts)
-
         ts.price_idx[t] = quadratic(ts.a[t], ts.b[t], ts.c[t])
-        ts.investors[1].get_expected_return()[t] = ts.annualized_earnings[t] / ts.price_idx[t]
+        ts.investors[1].expected_return()[t] = ts.annualized_earnings[t] / ts.price_idx[t]
         ts.return_idx[t] = ts.return_idx[t - 1] * (
             (ts.price_idx[t] + ts.monthly_earnings[t] * m.payout_ratio) / ts.price_idx[t - 1]
         )
+
         for investor in investors:
-            investor.get_wealth()[t] = (
-                investor.get_cash()[t - 1]
-                + investor.get_equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
+            investor.wealth()[t] = (
+                investor.cash()[t - 1]
+                + investor.equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
             )
-            investor.get_equity()[t] = (
-                investor.get_wealth()[t]
-                * investor.get_expected_return()[t]
-                / (investor.get_gamma() * investor.get_sigma() ** 2)
+            investor.equity()[t] = (
+                investor.wealth()[t]
+                * investor.expected_return()[t]
+                / (investor.gamma() * investor.sigma() ** 2)
             )
-            investor.get_cash()[t] = investor.get_wealth()[t] - investor.get_equity()[t]
+            investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
         fair_value = ts.annualized_earnings / m.initial_expected_return
 
@@ -222,16 +226,16 @@ def data_table(
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),
-            "Expected Return y": ts.investors[1].get_expected_return(),
-            "Expected Return x": ts.investors[0].get_expected_return(),
-            "Wealth x": ts.investors[0].get_wealth(),
-            "Wealth y": ts.investors[1].get_wealth(),
-            "Equity x": ts.investors[0].get_equity(),
-            "Equity y": ts.investors[1].get_equity(),
-            "Cash x": ts.investors[0].get_cash(),
-            "Cash y": ts.investors[1].get_cash(),
-            "Kappa_x": ts.investors[0].get_equity() / ts.investors[0].get_wealth(),
-            "Kappa_y": ts.investors[1].get_equity() / ts.investors[1].get_wealth(),
+            "Expected Return y": ts.investors[1].expected_return(),
+            "Expected Return x": ts.investors[0].expected_return(),
+            "Wealth x": ts.investors[0].wealth(),
+            "Wealth y": ts.investors[1].wealth(),
+            "Equity x": ts.investors[0].equity(),
+            "Equity y": ts.investors[1].equity(),
+            "Cash x": ts.investors[0].cash(),
+            "Cash y": ts.investors[1].cash(),
+            "Kappa_x": ts.investors[0].equity() / ts.investors[0].wealth(),
+            "Kappa_y": ts.investors[1].equity() / ts.investors[1].wealth(),
             "Fair Value": fair_value,
         }
     )

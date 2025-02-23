@@ -4,6 +4,7 @@ from typing import NamedTuple, Protocol
 
 import numpy as np
 import polars as pl
+from numpy.typing import NDArray
 
 from bubbles.dz import dz
 
@@ -80,29 +81,29 @@ class InvestorProvider(Protocol):
     """Protocol defining the interface for investor types.
 
     Methods:
-        get_percent: Returns the investor's percentage of total market
-        get_gamma: Returns the investor's risk aversion parameter
-        get_sigma: Returns the investor's volatility parameter
+        percent: Returns the investor's percentage of total market
+        gamma: Returns the investor's risk aversion parameter
+        sigma: Returns the investor's volatility parameter
         merton_share: Calculates optimal portfolio share based on Merton's formula
-        get_expected_return: Returns array of expected returns over time
-        get_wealth: Returns array of total wealth over time
-        get_equity: Returns array of equity holdings over time
-        get_cash: Returns array of cash holdings over time
-        get_cash_post_distribution: Returns array of cash positions after distributions
+        expected_return: Returns array of expected returns over time
+        wealth: Returns array of total wealth over time
+        equity: Returns array of equity holdings over time
+        cash: Returns array of cash holdings over time
+        cash_post_distribution: Returns array of cash positions after distributions
     """
 
-    def get_percent(self) -> float: ...
-    def get_gamma(self) -> float: ...
-    def get_sigma(self) -> float: ...
+    def percent(self) -> float: ...
+    def gamma(self) -> float: ...
+    def sigma(self) -> float: ...
 
     def merton_share(self, excess_return: float) -> float:
-        return excess_return / (self.get_gamma() * self.get_sigma() ** 2)
+        return excess_return / (self.gamma() * self.sigma() ** 2)
 
-    def get_expected_return(self) -> np.ndarray[float]: ...
-    def get_wealth(self) -> np.ndarray[float]: ...
-    def get_equity(self) -> np.ndarray[float]: ...
-    def get_cash(self) -> np.ndarray[float]: ...
-    def get_cash_post_distribution(self) -> np.ndarray[float]: ...
+    def expected_return(self) -> NDArray[np.float64]: ...
+    def wealth(self) -> NDArray[np.float64]: ...
+    def equity(self) -> NDArray[np.float64]: ...
+    def cash(self) -> NDArray[np.float64]: ...
+    def cash_post_distribution(self) -> NDArray[np.float64]: ...
 
 
 class InvestorParameters(NamedTuple):
@@ -140,11 +141,11 @@ class InvestorStats:
         cash_post_distribution: Cash position after distributions
     """
 
-    wealth: np.ndarray[float]
-    expected_return: np.ndarray[float]
-    equity: np.ndarray[float]
-    cash: np.ndarray[float]
-    cash_post_distribution: np.ndarray[float]
+    wealth: NDArray[np.float64]
+    expected_return: NDArray[np.float64]
+    equity: NDArray[np.float64]
+    cash: NDArray[np.float64]
+    cash_post_distribution: NDArray[np.float64]
 
     @classmethod
     def initialize(cls, m: Market) -> "InvestorStats":
@@ -184,12 +185,46 @@ class InvestorStats:
         )
 
 
-class Extrapolator(NamedTuple):
+@dataclass
+class InvestorBase:
+    """Base class implementing common getter methods for investors."""
+
+    params: InvestorParameters
+    stats: InvestorStats
+
+    def percent(self) -> float:
+        return self.params.percent
+
+    def gamma(self) -> float:
+        return self.params.gamma
+
+    def sigma(self) -> float:
+        return self.params.sigma
+
+    def wealth(self) -> np.ndarray[float]:
+        return self.stats.wealth
+
+    def expected_return(self) -> np.ndarray[float]:
+        return self.stats.expected_return
+
+    def equity(self) -> np.ndarray[float]:
+        return self.stats.equity
+
+    def cash(self) -> np.ndarray[float]:
+        return self.stats.cash
+
+    def cash_post_distribution(self) -> np.ndarray[float]:
+        return self.stats.cash_post_distribution
+
+    def merton_share(self, excess_return: float) -> float:
+        return excess_return / (self.gamma() * self.sigma() ** 2)
+
+
+@dataclass
+class Extrapolator(InvestorBase):
     """An investor type that extrapolates returns from historical data.
 
     Attributes:
-        params: Basic investor parameters
-        stats: Time series statistics for this investor
         weights: Array of weights for historical return calculation
         speed_of_adjustment: Rate at which expectations adjust to new information
         squeeze_target: Target return rate for normalization
@@ -197,8 +232,6 @@ class Extrapolator(NamedTuple):
         squeezing: Scaling factor for return normalization
     """
 
-    params: InvestorParameters
-    stats: InvestorStats
     weights: np.ndarray
     speed_of_adjustment: float
     squeeze_target: float
@@ -206,7 +239,7 @@ class Extrapolator(NamedTuple):
     squeezing: float
 
     @classmethod
-    def create(cls) -> "Extrapolator":
+    def new(cls) -> "Extrapolator":
         return cls(
             params=InvestorParameters(),
             stats=InvestorStats.initialize(Market()),
@@ -244,30 +277,6 @@ class Extrapolator(NamedTuple):
             f"{textwrap.indent(repr(self.params), '  ')}\n"
         )
 
-    def get_percent(self) -> float:
-        return self.params.percent
-
-    def get_gamma(self) -> float:
-        return self.params.gamma
-
-    def get_sigma(self) -> float:
-        return self.params.sigma
-
-    def get_wealth(self) -> np.ndarray[float]:
-        return self.stats.wealth
-
-    def get_expected_return(self) -> np.ndarray[float]:
-        return self.stats.expected_return
-
-    def get_equity(self) -> np.ndarray[float]:
-        return self.stats.equity
-
-    def get_cash(self) -> np.ndarray[float]:
-        return self.stats.cash
-
-    def get_cash_post_distribution(self) -> np.ndarray[float]:
-        return self.stats.cash_post_distribution
-
     def normalize_weights(
         self, n_year_annualized_return: float, initial_expected_return: float
     ) -> float:
@@ -284,11 +293,9 @@ class Extrapolator(NamedTuple):
             (n_year_annualized_return - initial_expected_return) / self.squeezing
         )
 
-    def merton_share(self, excess_return: float) -> float:
-        return InvestorProvider.merton_share(self, excess_return)
 
-
-class LongTermInvestor(NamedTuple):
+@dataclass
+class LongTermInvestor(InvestorBase):
     """An investor type that maintains constant return expectations.
 
     Attributes:
@@ -296,11 +303,8 @@ class LongTermInvestor(NamedTuple):
         stats: Time series statistics for this investor
     """
 
-    params: InvestorParameters
-    stats: InvestorStats
-
     @classmethod
-    def create(cls) -> "LongTermInvestor":
+    def new(cls) -> "LongTermInvestor":
         return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
 
     def __repr__(self) -> str:
@@ -317,33 +321,6 @@ class LongTermInvestor(NamedTuple):
             return f"{np.nanmean(arr[valid]):.2%}"
 
         return f"LongTermInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
-
-    def get_percent(self) -> float:
-        return self.params.percent
-
-    def get_gamma(self) -> float:
-        return self.params.gamma
-
-    def get_sigma(self) -> float:
-        return self.params.sigma
-
-    def get_wealth(self) -> np.ndarray[float]:
-        return self.stats.wealth
-
-    def get_expected_return(self) -> np.ndarray[float]:
-        return self.stats.expected_return
-
-    def get_equity(self) -> np.ndarray[float]:
-        return self.stats.equity
-
-    def get_cash(self) -> np.ndarray[float]:
-        return self.stats.cash
-
-    def get_cash_post_distribution(self) -> np.ndarray[float]:
-        return self.stats.cash_post_distribution
-
-    def merton_share(self, excess_return: float) -> float:
-        return InvestorProvider.merton_share(self, excess_return)
 
 
 class TimeSeries(NamedTuple):
@@ -362,18 +339,18 @@ class TimeSeries(NamedTuple):
         dz: Random shock values
     """
 
-    monthly_earnings: np.ndarray
-    price_idx: np.ndarray
-    annualized_earnings: np.ndarray
-    return_idx: np.ndarray
-    total_cash: np.ndarray
+    monthly_earnings: NDArray[np.float64]
+    price_idx: NDArray[np.float64]
+    annualized_earnings: NDArray[np.float64]
+    return_idx: NDArray[np.float64]
+    total_cash: NDArray[np.float64]
     investors: list[InvestorProvider]
-    squeeze: np.ndarray
-    n_year_annualized_return: np.ndarray
-    a: np.ndarray
-    b: np.ndarray
-    c: np.ndarray
-    dz: np.ndarray
+    squeeze: NDArray[np.float64]
+    n_year_annualized_return: NDArray[np.float64]
+    a: NDArray[np.float64]
+    b: NDArray[np.float64]
+    c: NDArray[np.float64]
+    dz: NDArray[np.float64]
 
     @classmethod
     def initialize(cls, mkt: Market, investors: list[InvestorProvider]) -> "TimeSeries":
@@ -474,11 +451,11 @@ class TimeSeries(NamedTuple):
             suffix = f"_{i}"
             data.update(
                 {
-                    f"expected_return{suffix}": investor.get_expected_return(),
-                    f"wealth{suffix}": investor.get_wealth(),
-                    f"equity{suffix}": investor.get_equity(),
-                    f"cash{suffix}": investor.get_cash(),
-                    f"cash_post_distribution{suffix}": investor.get_cash_post_distribution(),
+                    f"expected_return{suffix}": investor.expected_return(),
+                    f"wealth{suffix}": investor.wealth(),
+                    f"equity{suffix}": investor.equity(),
+                    f"cash{suffix}": investor.cash(),
+                    f"cash_post_distribution{suffix}": investor.cash_post_distribution(),
                 }
             )
 
