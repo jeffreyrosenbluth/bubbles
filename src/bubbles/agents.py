@@ -94,9 +94,16 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
     total_demand = 0
     for investor in ts.investors:
         # Calculate desired equity position for each investor
-        expected_return = investor.calculate_expected_return(
-            t, ts.annualized_earnings[t], ts.n_year_annualized_return[t], mkt, price
-        )
+        match investor.investor_type():
+            case "extrapolator":
+                expected_return = investor.calculate_expected_return(
+                    t, ts.n_year_annualized_return[t], mkt
+                )
+            case "long_term":
+                expected_return = investor.calculate_expected_return(
+                    ts.annualized_earnings[t],
+                    price,
+                )
         cash = investor.cash_post_distribution()[t]
         desired_equity = (
             expected_return * (cash + price * investor.equity()[t - 1] / ts.price_idx[t - 1])
@@ -194,9 +201,16 @@ def data_table(
         )
 
         for investor in investors:
-            investor.expected_return()[t] = investor.calculate_expected_return(
-                t, ts.annualized_earnings[t], ts.n_year_annualized_return[t], mkt, ts.price_idx[t]
-            )
+            match investor.investor_type():
+                case "extrapolator":
+                    investor.expected_return()[t] = investor.calculate_expected_return(
+                        t, ts.n_year_annualized_return[t], mkt
+                    )
+                case "long_term":
+                    investor.expected_return()[t] = investor.calculate_expected_return(
+                        ts.annualized_earnings[t],
+                        ts.price_idx[t],
+                    )
             investor.wealth()[t] = (
                 investor.cash()[t - 1]
                 + investor.equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]

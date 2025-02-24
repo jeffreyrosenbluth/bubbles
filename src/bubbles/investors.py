@@ -1,6 +1,6 @@
 import textwrap
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -153,13 +153,14 @@ class Extrapolator(InvestorBase):
             squeezing=0.1,
         )
 
+    def investor_type(self) -> Literal["extrapolator"]:
+        return "extrapolator"
+
     def calculate_expected_return(
         self,
         t: int,
-        annualized_earnings: float,
         n_year_annualized_return: float,
         mkt: Market,
-        price: float,
     ) -> float:
         squeeze = self.squeeze_target + self.max_deviation * np.tanh(
             (n_year_annualized_return - mkt.initial_expected_return) / self.squeezing
@@ -210,12 +211,12 @@ class LongTermInvestor(InvestorBase):
     def new(cls) -> "LongTermInvestor":
         return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
 
+    def investor_type(self) -> Literal["long_term"]:
+        return "long_term"
+
     def calculate_expected_return(
         self,
-        t: int,
         annualized_earnings: float,
-        n_year_annualized_return: float,
-        mkt: Market,
         price: float,
     ) -> float:
         return annualized_earnings / price
