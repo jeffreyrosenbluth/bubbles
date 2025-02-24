@@ -14,24 +14,6 @@ from bubbles.protocols import InvestorProvider
 SQRT_12 = np.sqrt(12)
 
 
-def weighted_avg_returns(
-    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
-) -> float:
-    """Calculate weighted average of historical returns.
-
-    Args:
-        return_idx: Array of return indices
-        weights: Array of weights for each historical period
-        t: Current time index
-
-    Returns:
-        Weighted average of returns over the specified period
-    """
-    indices = t - np.arange(len(weights) + 1) * 12 - 1
-    returns_slice = return_idx[indices]
-    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
-
-
 class TimeSeries(NamedTuple):
     """Container for all time-varying simulation data.
 
@@ -86,7 +68,7 @@ class TimeSeries(NamedTuple):
             dz=dz_zero,
         )
 
-    def earnings(self, mkt: Market, reinvested: float, t: int) -> float:
+    def earnings(self, mkt: Market, reinvested: float, t: int) -> np.float64:
         """Calculate earnings for the current period.
 
         Args:
@@ -103,7 +85,7 @@ class TimeSeries(NamedTuple):
             * (1 + self.dz[t] * mkt.earnings_vol / SQRT_12)
         )
 
-    def annualize(self, mkt: Market, t: int) -> float:
+    def annualize(self, mkt: Market, t: int) -> np.float64:
         """Convert monthly earnings to annualized value.
 
         Args:
@@ -117,7 +99,7 @@ class TimeSeries(NamedTuple):
             t - 1
         ]
 
-    def calculate_return_idx(self, mkt: Market, t: int) -> float:
+    def calculate_return_idx(self, mkt: Market, t: int) -> np.float64:
         """Calculate return index including both price changes and dividends.
 
         Args:
@@ -144,7 +126,6 @@ class TimeSeries(NamedTuple):
             "return_idx": self.return_idx,
             "price_idx": self.price_idx,
             "total_cash": self.total_cash,
-            "squeeze": self.squeeze,
             "n_year_annualized_return": self.n_year_annualized_return,
             "a": self.a,
             "b": self.b,
@@ -190,7 +171,6 @@ class TimeSeries(NamedTuple):
             f"  annualized_earnings: {array_stats(self.annualized_earnings)}\n"
             f"  return_idx: {array_stats(self.return_idx)}\n"
             f"  total_cash: {array_stats(self.total_cash)}\n"
-            f"  squeeze: {array_stats(self.squeeze)}\n"
             f"  n_year_annualized_return: {array_stats(self.n_year_annualized_return)}\n\n"
             f"Calculation Values:\n"
             f"  a: {array_stats(self.a)}\n"

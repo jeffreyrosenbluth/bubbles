@@ -8,10 +8,10 @@ import numpy as np
 import polars as pl
 from scipy.optimize import root_scalar
 
-from bubbles.investors import weights_5_36
+from bubbles.investors import weighted_avg_returns, weights_5_36
 from bubbles.market import Market
 from bubbles.protocols import InvestorProvider
-from bubbles.timeseries import TimeSeries, weighted_avg_returns
+from bubbles.timeseries import TimeSeries
 
 SQRT_12 = np.sqrt(12)
 
@@ -114,7 +114,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
     return total_demand - price  # Supply is just the price
 
 
-def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
+def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> np.float64:
     """Find the equilibrium price using numerical root finding.
 
     Args:
@@ -123,11 +123,11 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
         mkt: Market parameters
 
     Returns:
-        float: Equilibrium price index
+        np.float64: Equilibrium price index
     """
     initial_guess = ts.price_idx[t - 1]
 
-    def objective(price):
+    def objective(price: np.float64) -> np.float64:
         return market_clearing_error(price, t, ts, mkt)
 
     result = root_scalar(

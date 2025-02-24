@@ -158,9 +158,9 @@ class Extrapolator(InvestorBase):
     def calculate_expected_return(
         self,
         t: int,
-        n_year_annualized_return: float,
+        n_year_annualized_return: np.float64,
         mkt: Market,
-    ) -> float:
+    ) -> np.float64:
         squeeze = self.squeeze_target + self.max_deviation * np.tanh(
             (n_year_annualized_return - mkt.initial_expected_return) / self.squeezing
         )
@@ -248,3 +248,21 @@ def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
     """
     ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
     return ws / ws.sum()
+
+
+def weighted_avg_returns(
+    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
+) -> np.float64:
+    """Calculate weighted average of historical returns.
+
+    Args:
+        return_idx: Array of return indices
+        weights: Array of weights for each historical period
+        t: Current time index
+
+    Returns:
+        Weighted average of returns over the specified period
+    """
+    indices = t - np.arange(len(weights) + 1) * 12 - 1
+    returns_slice = return_idx[indices]
+    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
