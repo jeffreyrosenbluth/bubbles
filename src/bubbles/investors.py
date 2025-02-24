@@ -122,6 +122,39 @@ class InvestorBase:
         return excess_return / (self.gamma() * self.sigma() ** 2)
 
 
+# TODO: Move to methods of Extrapolator
+def weights_5_36(start_weight: np.float64 = 36.0, n: int = 5) -> NDArray[np.float64]:
+    """Generate exponentially decaying weights for return calculations.
+
+    Args:
+        start_weight: Initial weight value
+        n: Number of weights to generate
+
+    Returns:
+        Normalized array of weights that sum to 1.0
+    """
+    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
+    return ws / ws.sum()
+
+
+def weighted_avg_returns(
+    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
+) -> np.float64:
+    """Calculate weighted average of historical returns.
+
+    Args:
+        return_idx: Array of return indices
+        weights: Array of weights for each historical period
+        t: Current time index
+
+    Returns:
+        Weighted average of returns over the specified period
+    """
+    indices = t - np.arange(len(weights) + 1) * 12 - 1
+    returns_slice = return_idx[indices]
+    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
+
+
 @dataclass
 class Extrapolator(InvestorBase):
     """An investor type that extrapolates returns from historical data.
@@ -167,6 +200,21 @@ class Extrapolator(InvestorBase):
         return (
             squeeze * self.speed_of_adjustment
             + (1 - self.speed_of_adjustment) * self.expected_return()[t - 1]
+        )
+
+    def desired_equity(
+        self,
+        t: int,
+        n_year_annualized_return: np.float64,
+        mkt: Market,
+        price_prev,
+        price_new: np.float64,
+    ) -> np.float64:
+        er = self.calculate_expected_return(t, n_year_annualized_return, mkt)
+        return (
+            er
+            * (self.cash_post_distribution()[t] + price_new * self.equity()[t - 1] / price_prev)
+            / (self.gamma() * self.sigma() ** 2)
         )
 
     def __repr__(self) -> str:
@@ -220,6 +268,20 @@ class LongTermInvestor(InvestorBase):
     ) -> np.float64:
         return annualized_earnings / price
 
+    def desired_equity(
+        self,
+        t: int,
+        annualized_earnings: np.float64,
+        price_prev: np.float64,
+        price_new: np.float64,
+    ) -> np.float64:
+        er = self.calculate_expected_return(annualized_earnings, price_new)
+        return (
+            er
+            * (self.cash_post_distribution()[t] + price_new * self.equity()[t - 1] / price_prev)
+            / (self.gamma() * self.sigma() ** 2)
+        )
+
     def __repr__(self) -> str:
         def safe_mean(arr: NDArray[np.float64]) -> str:
             valid = ~np.isnan(arr)
@@ -236,33 +298,27 @@ class LongTermInvestor(InvestorBase):
         return f"LongTermInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
 
 
-def weights_5_36(start_weight: np.float64 = 36.0, n: int = 5) -> NDArray[np.float64]:
-    """Generate exponentially decaying weights for return calculations.
+@dataclass
+class Rebalancer_60_40(InvestorBase):
+    """An investor type that rebalances between stocks and bonds.
 
-    Args:
-        start_weight: Initial weight value
-        n: Number of weights to generate
-
-    Returns:
-        Normalized array of weights that sum to 1.0
+    Attributes:
+        params: Basic investor parameters
+        stats: Time series statistics for this investor
     """
-    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
-    return ws / ws.sum()
 
+    @classmethod
+    def new(cls) -> "Rebalancer_60_40":
+        return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
 
-def weighted_avg_returns(
-    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
-) -> np.float64:
-    """Calculate weighted average of historical returns.
+    def investor_type(self) -> Literal["rebalancer_60_40"]:
+        return "rebalancer_60_40"
 
-    Args:
-        return_idx: Array of return indices
-        weights: Array of weights for each historical period
-        t: Current time index
+    def calculate_expected_return(self, *args) -> np.float64:
+        return 0.0
 
-    Returns:
-        Weighted average of returns over the specified period
-    """
-    indices = t - np.arange(len(weights) + 1) * 12 - 1
-    returns_slice = return_idx[indices]
-    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
+    def desired_equity(self, *args) -> np.float64:
+        return 0.6
+
+    def __repr__(self) -> str:
+        return f"Rebalancer_60_40\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"

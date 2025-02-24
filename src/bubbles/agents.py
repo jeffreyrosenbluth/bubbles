@@ -81,7 +81,7 @@ def history_ts(
     return ts
 
 
-def market_clearing_error(price: np.float64, t: int, ts: TimeSeries, mkt: Market) -> np.float64:
+def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> np.float64:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -97,18 +97,13 @@ def market_clearing_error(price: np.float64, t: int, ts: TimeSeries, mkt: Market
         # Calculate desired equity position for each investor
         match investor.investor_type():
             case "extrapolator":
-                expected_return = investor.calculate_expected_return(
-                    t, ts.n_year_annualized_return[t], mkt
+                desired_equity = investor.desired_equity(
+                    t, ts.n_year_annualized_return[t], mkt, ts.price_idx[t - 1], price
                 )
             case "long_term":
-                expected_return = investor.calculate_expected_return(
-                    ts.annualized_earnings[t],
-                    price,
+                desired_equity = investor.desired_equity(
+                    t, ts.annualized_earnings[t], ts.price_idx[t - 1], price
                 )
-        cash = investor.cash_post_distribution()[t]
-        desired_equity = (
-            expected_return * (cash + price * investor.equity()[t - 1] / ts.price_idx[t - 1])
-        ) / (investor.gamma() * investor.sigma() ** 2)
         total_demand += desired_equity
 
     return total_demand - price  # Supply is just the price
@@ -202,25 +197,30 @@ def data_table(
         )
 
         for investor in investors:
+            investor.wealth()[t] = (
+                investor.cash()[t - 1]
+                + investor.equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
+            )
             match investor.investor_type():
                 case "extrapolator":
                     investor.expected_return()[t] = investor.calculate_expected_return(
                         t, ts.n_year_annualized_return[t], mkt
+                    )
+                    investor.equity()[t] = (
+                        investor.wealth()[t]
+                        * investor.expected_return()[t]
+                        / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "long_term":
                     investor.expected_return()[t] = investor.calculate_expected_return(
                         ts.annualized_earnings[t],
                         ts.price_idx[t],
                     )
-            investor.wealth()[t] = (
-                investor.cash()[t - 1]
-                + investor.equity()[t - 1] * ts.return_idx[t] / ts.return_idx[t - 1]
-            )
-            investor.equity()[t] = (
-                investor.wealth()[t]
-                * investor.expected_return()[t]
-                / (investor.gamma() * investor.sigma() ** 2)
-            )
+                    investor.equity()[t] = (
+                        investor.wealth()[t]
+                        * investor.expected_return()[t]
+                        / (investor.gamma() * investor.sigma() ** 2)
+                    )
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
         fair_value = ts.annualized_earnings / mkt.initial_expected_return
