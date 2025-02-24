@@ -81,7 +81,7 @@ def history_ts(
     return ts
 
 
-def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
+def market_clearing_error(price: np.float64, t: int, ts: TimeSeries, mkt: Market) -> np.float64:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -90,7 +90,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
         ts: Time series data containing market and investor state
 
     Returns:
-        float: Excess demand (positive means demand > supply)
+        np.float64: Excess demand (positive means demand > supply)
     """
     total_demand = 0
     for investor in ts.investors:

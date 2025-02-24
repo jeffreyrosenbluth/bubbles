@@ -17,9 +17,9 @@ class InvestorParameters(NamedTuple):
         sigma: Volatility parameter
     """
 
-    percent: float = 0.5
-    gamma: float = 3.0
-    sigma: float = 0.16
+    percent: np.float64 = 0.5
+    gamma: np.float64 = 3.0
+    sigma: np.float64 = 0.16
 
     def __repr__(self) -> str:
         return (
@@ -94,13 +94,13 @@ class InvestorBase:
     params: InvestorParameters
     stats: InvestorStats
 
-    def percent(self) -> float:
+    def percent(self) -> np.float64:
         return self.params.percent
 
-    def gamma(self) -> float:
+    def gamma(self) -> np.float64:
         return self.params.gamma
 
-    def sigma(self) -> float:
+    def sigma(self) -> np.float64:
         return self.params.sigma
 
     def wealth(self) -> NDArray[np.float64]:
@@ -118,7 +118,7 @@ class InvestorBase:
     def cash_post_distribution(self) -> NDArray[np.float64]:
         return self.stats.cash_post_distribution
 
-    def merton_share(self, excess_return: float) -> float:
+    def merton_share(self, excess_return: np.float64) -> np.float64:
         return excess_return / (self.gamma() * self.sigma() ** 2)
 
 
@@ -135,10 +135,10 @@ class Extrapolator(InvestorBase):
     """
 
     weights: NDArray[np.float64]
-    speed_of_adjustment: float
-    squeeze_target: float
-    max_deviation: float
-    squeezing: float
+    speed_of_adjustment: np.float64
+    squeeze_target: np.float64
+    max_deviation: np.float64
+    squeezing: np.float64
 
     @classmethod
     def new(cls) -> "Extrapolator":
@@ -215,9 +215,9 @@ class LongTermInvestor(InvestorBase):
 
     def calculate_expected_return(
         self,
-        annualized_earnings: float,
-        price: float,
-    ) -> float:
+        annualized_earnings: np.float64,
+        price: np.float64,
+    ) -> np.float64:
         return annualized_earnings / price
 
     def __repr__(self) -> str:
@@ -236,7 +236,7 @@ class LongTermInvestor(InvestorBase):
         return f"LongTermInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
 
 
-def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
+def weights_5_36(start_weight: np.float64 = 36.0, n: int = 5) -> NDArray[np.float64]:
     """Generate exponentially decaying weights for return calculations.
 
     Args:

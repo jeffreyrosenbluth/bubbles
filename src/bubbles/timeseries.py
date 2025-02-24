@@ -55,20 +55,20 @@ class TimeSeries(NamedTuple):
         dz_zero = dz.copy()
         dz_zero[: mkt.history_length * 12 + 1] = 0
         return cls(
-            monthly_earnings=np.full(n, np.nan, dtype=float),
-            price_idx=np.ones(n),  # Initialize to ones
-            annualized_earnings=np.full(n, np.nan, dtype=float),
-            return_idx=np.ones(n),  # Initialize to ones
-            total_cash=np.full(n, np.nan, dtype=float),
+            monthly_earnings=np.full(n, np.nan, dtype=np.float64),
+            price_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
+            annualized_earnings=np.full(n, np.nan, dtype=np.float64),
+            return_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
+            total_cash=np.full(n, np.nan, dtype=np.float64),
             investors=investors,  # Initialize with empty list
-            n_year_annualized_return=np.full(n, np.nan, dtype=float),
-            a=np.full(n, np.nan, dtype=float),
-            b=np.full(n, np.nan, dtype=float),
-            c=np.full(n, np.nan, dtype=float),
+            n_year_annualized_return=np.full(n, np.nan, dtype=np.float64),
+            a=np.full(n, np.nan, dtype=np.float64),
+            b=np.full(n, np.nan, dtype=np.float64),
+            c=np.full(n, np.nan, dtype=np.float64),
             dz=dz_zero,
         )
 
-    def earnings(self, mkt: Market, reinvested: float, t: int) -> np.float64:
+    def earnings(self, mkt: Market, reinvested: np.float64, t: int) -> np.float64:
         """Calculate earnings for the current period.
 
         Args:
