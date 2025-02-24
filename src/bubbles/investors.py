@@ -6,7 +6,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bubbles.market import Market
-from bubbles.timeseries import TimeSeries, weights_5_36
 
 
 class InvestorParameters(NamedTuple):
@@ -235,3 +234,17 @@ class LongTermInvestor(InvestorBase):
             return f"{np.nanmean(arr[valid]):.2%}"
 
         return f"LongTermInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
+
+
+def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
+    """Generate exponentially decaying weights for return calculations.
+
+    Args:
+        start_weight: Initial weight value
+        n: Number of weights to generate
+
+    Returns:
+        Normalized array of weights that sum to 1.0
+    """
+    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
+    return ws / ws.sum()

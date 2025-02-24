@@ -8,9 +8,10 @@ import numpy as np
 import polars as pl
 from scipy.optimize import root_scalar
 
+from bubbles.investors import weights_5_36
 from bubbles.market import Market
 from bubbles.protocols import InvestorProvider
-from bubbles.timeseries import TimeSeries, weighted_avg_returns, weights_5_36
+from bubbles.timeseries import TimeSeries, weighted_avg_returns
 
 SQRT_12 = np.sqrt(12)
 

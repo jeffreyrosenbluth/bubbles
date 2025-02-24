@@ -8,24 +8,10 @@ import polars as pl
 from numpy.typing import NDArray
 
 from bubbles.dz import dz
-from bubbles.market import Market  # Updated import
+from bubbles.market import Market
 from bubbles.protocols import InvestorProvider
 
 SQRT_12 = np.sqrt(12)
-
-
-def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
-    """Generate exponentially decaying weights for return calculations.
-
-    Args:
-        start_weight: Initial weight value
-        n: Number of weights to generate
-
-    Returns:
-        Normalized array of weights that sum to 1.0
-    """
-    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
-    return ws / ws.sum()
 
 
 def weighted_avg_returns(

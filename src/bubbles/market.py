@@ -5,11 +5,11 @@ class Market(NamedTuple):
     """Global parameters for market simulation.
 
     Attributes:
-        years: Number of years to simulate
+        years: Number of years to simulate after history
         initial_expected_return: Starting expected return rate
         earnings_vol: Volatility of earnings
         payout_ratio: Ratio of earnings paid as dividends
-        history_length: Number of years of history to consider
+        history_length: Number of years of history, i.e before the simulation starts
         seed: Random seed for reproducibility (0 uses predefined dz.py values)
     """
 
