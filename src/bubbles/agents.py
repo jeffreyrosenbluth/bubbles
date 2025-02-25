@@ -81,7 +81,7 @@ def history_ts(
     return ts
 
 
-def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> np.float64:
+def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -92,7 +92,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
     Returns:
         np.float64: Excess demand (positive means demand > supply)
     """
-    total_demand = 0
+    total_demand = 0.0
     for investor in ts.investors:
         # Calculate desired equity position for each investor
         match investor.investor_type():
@@ -104,12 +104,16 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
                 desired_equity = investor.desired_equity(
                     t, ts.annualized_earnings[t], ts.price_idx[t - 1], price
                 )
+            case "rebalancer_60_40":
+                desired_equity = investor.desired_equity()
+            case _:  # Add this wildcard case
+                raise ValueError(f"Unknown investor type: {investor.investor_type()}")
         total_demand += desired_equity
 
     return total_demand - price  # Supply is just the price
 
 
-def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> np.float64:
+def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
     """Find the equilibrium price using numerical root finding.
 
     Args:
@@ -122,7 +126,7 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> np.float64:
     """
     initial_guess = ts.price_idx[t - 1]
 
-    def objective(price: np.float64) -> np.float64:
+    def objective(price: float) -> float:
         return market_clearing_error(price, t, ts, mkt)
 
     result = root_scalar(
@@ -221,6 +225,10 @@ def data_table(
                         * investor.expected_return()[t]
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
+                case "rebalancer_60_40":
+                    investor.expected_return()[t] = investor.calculate_expected_return()
+                    investor.equity()[t] = investor.wealth()[t] * investor.desired_equity()
+
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
         fair_value = ts.annualized_earnings / mkt.initial_expected_return
@@ -229,21 +237,23 @@ def data_table(
     return pl.DataFrame(
         {
             "Month": list(range(len(ts.annualized_earnings))),
-            "Annualized E": ts.annualized_earnings,
-            "Monthly E": ts.monthly_earnings,
+            # "Annualized E": ts.annualized_earnings,
+            # "Monthly E": ts.monthly_earnings,
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),
-            "Expected Return y": ts.investors[1].expected_return(),
-            "Expected Return x": ts.investors[0].expected_return(),
             "Wealth x": ts.investors[0].wealth(),
             "Wealth y": ts.investors[1].wealth(),
+            "Wealth z": ts.investors[2].wealth(),
             "Equity x": ts.investors[0].equity(),
             "Equity y": ts.investors[1].equity(),
+            "Equity z": ts.investors[2].equity(),
             "Cash x": ts.investors[0].cash(),
             "Cash y": ts.investors[1].cash(),
-            "Kappa_x": ts.investors[0].equity() / ts.investors[0].wealth(),
-            "Kappa_y": ts.investors[1].equity() / ts.investors[1].wealth(),
+            "Cash z": ts.investors[2].cash(),
+            "kappa_x": ts.investors[0].equity() / ts.investors[0].wealth(),
+            "kappa_y": ts.investors[1].equity() / ts.investors[1].wealth(),
+            "kappa_z": ts.investors[2].equity() / ts.investors[2].wealth(),
             "Fair Value": fair_value,
         }
     )

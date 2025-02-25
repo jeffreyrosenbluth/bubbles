@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import textwrap
-from typing import NamedTuple
+from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
@@ -14,7 +14,8 @@ from bubbles.protocols import InvestorProvider
 SQRT_12 = np.sqrt(12)
 
 
-class TimeSeries(NamedTuple):
+@dataclass(frozen=True)
+class TimeSeries:
     """Container for all time-varying simulation data.
 
     Attributes:

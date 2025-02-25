@@ -33,6 +33,7 @@ dev = [
 lint = [
     "ruff>=0.9.7",
 ]
+
 [tool.mypy]
 python_version = "3.13"
 disallow_untyped_defs = true
@@ -45,3 +46,4 @@ warn_unused_ignores = true
 warn_return_any = true
 warn_unreachable = true
 strict_optional = true
+plugins = ["numpy.typing.mypy_plugin", "scipy.typing.mypy_plugin"]

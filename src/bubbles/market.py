@@ -1,9 +1,8 @@
-from typing import NamedTuple
-
-import numpy as np
+from dataclasses import dataclass
 
 
-class Market(NamedTuple):
+@dataclass(frozen=True)
+class Market:
     """Global parameters for market simulation.
 
     Attributes:
@@ -16,9 +15,9 @@ class Market(NamedTuple):
     """
 
     years: int = 50
-    initial_expected_return: np.float64 = 0.04
-    earnings_vol: np.float64 = 0.10
-    payout_ratio: np.float64 = 0.5
+    initial_expected_return: float = 0.04
+    earnings_vol: float = 0.10
+    payout_ratio: float = 0.5
     history_length: int = 5
     seed: int = 1337194922  # 0 for dz.py
 

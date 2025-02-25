@@ -1,6 +1,6 @@
 import textwrap
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -8,7 +8,8 @@ from numpy.typing import NDArray
 from bubbles.market import Market
 
 
-class InvestorParameters(NamedTuple):
+@dataclass(frozen=True)
+class InvestorParameters:
     """Parameters defining an investor's characteristics.
 
     Attributes:
@@ -17,9 +18,9 @@ class InvestorParameters(NamedTuple):
         sigma: Volatility parameter
     """
 
-    percent: np.float64 = 0.5
-    gamma: np.float64 = 3.0
-    sigma: np.float64 = 0.16
+    percent: float = 1 / 3
+    gamma: float = 3.0
+    sigma: float = 0.16
 
     def __repr__(self) -> str:
         return (
@@ -94,13 +95,13 @@ class InvestorBase:
     params: InvestorParameters
     stats: InvestorStats
 
-    def percent(self) -> np.float64:
+    def percent(self) -> float:
         return self.params.percent
 
-    def gamma(self) -> np.float64:
+    def gamma(self) -> float:
         return self.params.gamma
 
-    def sigma(self) -> np.float64:
+    def sigma(self) -> float:
         return self.params.sigma
 
     def wealth(self) -> NDArray[np.float64]:
@@ -123,7 +124,7 @@ class InvestorBase:
 
 
 # TODO: Move to methods of Extrapolator
-def weights_5_36(start_weight: np.float64 = 36.0, n: int = 5) -> NDArray[np.float64]:
+def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
     """Generate exponentially decaying weights for return calculations.
 
     Args:
@@ -133,8 +134,8 @@ def weights_5_36(start_weight: np.float64 = 36.0, n: int = 5) -> NDArray[np.floa
     Returns:
         Normalized array of weights that sum to 1.0
     """
-    ws = start_weight * np.power(0.75, np.arange(n))  # Vectorized exponentiation
-    return ws / ws.sum()
+    ws = start_weight * np.power(0.75, np.arange(n))
+    return np.array(ws / ws.sum(), dtype=np.float64)
 
 
 def weighted_avg_returns(
@@ -152,7 +153,7 @@ def weighted_avg_returns(
     """
     indices = t - np.arange(len(weights) + 1) * 12 - 1
     returns_slice = return_idx[indices]
-    return np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
+    return np.float64(np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1)))
 
 
 @dataclass
@@ -168,10 +169,10 @@ class Extrapolator(InvestorBase):
     """
 
     weights: NDArray[np.float64]
-    speed_of_adjustment: np.float64
-    squeeze_target: np.float64
-    max_deviation: np.float64
-    squeezing: np.float64
+    speed_of_adjustment: float
+    squeeze_target: float
+    max_deviation: float
+    squeezing: float
 
     @classmethod
     def new(cls) -> "Extrapolator":
@@ -191,13 +192,13 @@ class Extrapolator(InvestorBase):
     def calculate_expected_return(
         self,
         t: int,
-        n_year_annualized_return: np.float64,
+        n_year_annualized_return: float,
         mkt: Market,
-    ) -> np.float64:
+    ) -> float:
         squeeze = self.squeeze_target + self.max_deviation * np.tanh(
             (n_year_annualized_return - mkt.initial_expected_return) / self.squeezing
         )
-        return (
+        return float(
             squeeze * self.speed_of_adjustment
             + (1 - self.speed_of_adjustment) * self.expected_return()[t - 1]
         )
@@ -207,7 +208,7 @@ class Extrapolator(InvestorBase):
         t: int,
         n_year_annualized_return: np.float64,
         mkt: Market,
-        price_prev,
+        price_prev: np.float64,
         price_new: np.float64,
     ) -> np.float64:
         er = self.calculate_expected_return(t, n_year_annualized_return, mkt)
@@ -314,10 +315,10 @@ class Rebalancer_60_40(InvestorBase):
     def investor_type(self) -> Literal["rebalancer_60_40"]:
         return "rebalancer_60_40"
 
-    def calculate_expected_return(self, *args) -> np.float64:
+    def calculate_expected_return(self) -> np.float64:
         return 0.0
 
-    def desired_equity(self, *args) -> np.float64:
+    def desired_equity(self) -> np.float64:
         return 0.6
 
     def __repr__(self) -> str:
