@@ -5,7 +5,7 @@ from typing import Literal
 import numpy as np
 from numpy.typing import NDArray
 
-from bubbles.market import Market
+from bubbles.core import Market
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class InvestorParameters:
         sigma: Volatility parameter
     """
 
-    percent: float = 1 / 3
+    percent: float
     gamma: float = 3.0
     sigma: float = 0.16
 
@@ -175,9 +175,9 @@ class Extrapolator(InvestorBase):
     squeezing: float
 
     @classmethod
-    def new(cls) -> "Extrapolator":
+    def new(cls, percent: float) -> "Extrapolator":
         return cls(
-            params=InvestorParameters(),
+            params=InvestorParameters(percent),
             stats=InvestorStats.initialize(Market()),
             weights=weights_5_36(),
             speed_of_adjustment=0.1,
@@ -256,8 +256,8 @@ class LongTermInvestor(InvestorBase):
     """
 
     @classmethod
-    def new(cls) -> "LongTermInvestor":
-        return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
+    def new(cls, percent: float) -> "LongTermInvestor":
+        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
 
     def investor_type(self) -> Literal["long_term"]:
         return "long_term"
@@ -309,8 +309,8 @@ class Rebalancer_60_40(InvestorBase):
     """
 
     @classmethod
-    def new(cls) -> "Rebalancer_60_40":
-        return cls(params=InvestorParameters(), stats=InvestorStats.initialize(Market()))
+    def new(cls, percent: float) -> "Rebalancer_60_40":
+        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
 
     def investor_type(self) -> Literal["rebalancer_60_40"]:
         return "rebalancer_60_40"

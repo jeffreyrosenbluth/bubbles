@@ -1,16 +1,13 @@
 """
-An equilibrium multi-agent model in which the interaction between investors with different return
-expectations produces a rich market dynamic that includes equity market volatility in excess of earnings volatility,
-short-term trends, long-term mean reversion, high trading volume, and bubbles and crashes.
+An equilibrium multi-agent model.
 """
 
 import numpy as np
 import polars as pl
 from scipy.optimize import root_scalar
 
+from bubbles.core import InvestorProvider, Market
 from bubbles.investors import weighted_avg_returns, weights_5_36
-from bubbles.market import Market
-from bubbles.protocols import InvestorProvider
 from bubbles.timeseries import TimeSeries
 
 SQRT_12 = np.sqrt(12)
@@ -23,8 +20,7 @@ def history_ts(
     """Generate historical time series data for market initialization.
 
     This function simulates historical market data to establish initial conditions
-    for the main simulation. It creates a baseline of price indices, earnings,
-    and investor positions.
+    for the main simulation.
 
     Args:
         mkt: Market parameters
@@ -33,6 +29,9 @@ def history_ts(
     Returns:
         TimeSeries: Historical market data and investor positions
     """
+    total_percent = sum(inv.percent() for inv in investors)
+    assert np.isclose(total_percent, 1.0), f"Total percent must be 1.0, got {total_percent}"
+
     history_months = 12 * mkt.history_length
     ts = TimeSeries.initialize(mkt, investors)
 
@@ -153,7 +152,7 @@ def data_table(
     between different types of investors and their impact on market prices and returns.
 
     Args:
-        m: Market parameters including simulation length and initial conditions
+        mkt: Market parameters including simulation length and initial conditions
         investors: List of investor providers representing different trading strategies
 
     Returns:
@@ -233,27 +232,23 @@ def data_table(
 
         fair_value = ts.annualized_earnings / mkt.initial_expected_return
 
-    # Return results as a Polars DataFrame
+    # Create column names based on investor types
+    investor_columns = {}
+
+    for i, investor in enumerate(ts.investors):
+        inv_type = investor.investor_type()
+        investor_columns[f"Wealth {inv_type}"] = investor.wealth()
+        investor_columns[f"Equity {inv_type}"] = investor.equity()
+        investor_columns[f"Cash {inv_type}"] = investor.cash()
+        investor_columns[f"Share {inv_type}"] = investor.equity() / investor.wealth()
+
     return pl.DataFrame(
         {
             "Month": list(range(len(ts.annualized_earnings))),
-            # "Annualized E": ts.annualized_earnings,
-            # "Monthly E": ts.monthly_earnings,
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),
-            "Wealth x": ts.investors[0].wealth(),
-            "Wealth y": ts.investors[1].wealth(),
-            "Wealth z": ts.investors[2].wealth(),
-            "Equity x": ts.investors[0].equity(),
-            "Equity y": ts.investors[1].equity(),
-            "Equity z": ts.investors[2].equity(),
-            "Cash x": ts.investors[0].cash(),
-            "Cash y": ts.investors[1].cash(),
-            "Cash z": ts.investors[2].cash(),
-            "kappa_x": ts.investors[0].equity() / ts.investors[0].wealth(),
-            "kappa_y": ts.investors[1].equity() / ts.investors[1].wealth(),
-            "kappa_z": ts.investors[2].equity() / ts.investors[2].wealth(),
             "Fair Value": fair_value,
+            **investor_columns,  # Unpack the investor columns
         }
     )

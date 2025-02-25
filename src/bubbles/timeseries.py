@@ -7,9 +7,8 @@ import numpy as np
 import polars as pl
 from numpy.typing import NDArray
 
+from bubbles.core import InvestorProvider, Market
 from bubbles.dz import dz
-from bubbles.market import Market
-from bubbles.protocols import InvestorProvider
 
 SQRT_12 = np.sqrt(12)
 
