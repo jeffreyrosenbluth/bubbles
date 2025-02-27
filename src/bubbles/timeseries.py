@@ -22,7 +22,6 @@ class TimeSeries:
         price_idx: Price index over time
         return_idx: Return index
         investors: List of investors
-        n_year_annualized_return: N-year annualized returns
         dz: Random shock values
     """
 
@@ -30,7 +29,6 @@ class TimeSeries:
     price_idx: NDArray[np.float64]
     return_idx: NDArray[np.float64]
     investors: list[InvestorProvider]
-    n_year_annualized_return: NDArray[np.float64]
     dz: NDArray[np.float64]
 
     @classmethod
@@ -51,7 +49,6 @@ class TimeSeries:
             price_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
             return_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
             investors=investors,  # Initialize with empty list
-            n_year_annualized_return=np.full(n, np.nan, dtype=np.float64),
             dz=dz_zero,
         )
 
@@ -111,7 +108,6 @@ class TimeSeries:
             "monthly_earnings": self.monthly_earnings,
             "return_idx": self.return_idx,
             "price_idx": self.price_idx,
-            "n_year_annualized_return": self.n_year_annualized_return,
             "dz": self.dz,
         }
 
@@ -151,7 +147,6 @@ class TimeSeries:
             f"  monthly_earnings: {array_stats(self.monthly_earnings)}\n"
             f"  price_idx: {array_stats(self.price_idx)}\n"
             f"  return_idx: {array_stats(self.return_idx)}\n"
-            f"  n_year_annualized_return: {array_stats(self.n_year_annualized_return)}\n\n"
             f"Investors:\n"
             f"{investors_str}\n"
         )

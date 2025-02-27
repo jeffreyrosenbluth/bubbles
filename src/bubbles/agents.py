@@ -48,8 +48,7 @@ def history_ts(
         ts.price_idx[t] = ts.price_idx[t - 1] + reinvested
         ts.return_idx[t] = ts.calculate_return_idx(mkt, t)
 
-    annualized_earnings = ts.annualize(mkt, t)
-    ts.n_year_annualized_return[history_months] = annualized_earnings / ts.price_idx[history_months]
+    annualized_earnings = ts.annualize(mkt, history_months)
 
     current_return = annualized_earnings / ts.price_idx[history_months]
     total_percent_equity = sum(
@@ -91,8 +90,11 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
         # Calculate desired equity position for each investor
         match investor.investor_type():
             case "extrapolator":
+                n_year_annualized_return = investor.weighted_avg_returns(
+                    ts.return_idx, Extrapolator.weights_5_36(), t
+                )
                 desired_equity = investor.desired_equity(
-                    t, ts.n_year_annualized_return[t], mkt, ts.price_idx[t - 1], price
+                    t, n_year_annualized_return, mkt, ts.price_idx[t - 1], price
                 )
             case "long_term":
                 desired_equity = investor.desired_equity(
@@ -180,7 +182,7 @@ def data_table(
 
         for investor in investors:
             if investor.investor_type() == "extrapolator":
-                ts.n_year_annualized_return[t] = investor.weighted_avg_returns(
+                n_year_annualized_return = investor.weighted_avg_returns(
                     ts.return_idx, Extrapolator.weights_5_36(), t
                 )
             investor.cash_post_distribution()[t] = (
@@ -204,7 +206,7 @@ def data_table(
             match investor.investor_type():
                 case "extrapolator":
                     investor.expected_return()[t] = investor.calculate_expected_return(
-                        t, ts.n_year_annualized_return[t], mkt
+                        t, n_year_annualized_return, mkt
                     )
                     investor.equity()[t] = (
                         investor.wealth()[t]
