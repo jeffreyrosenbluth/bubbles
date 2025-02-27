@@ -7,7 +7,7 @@ import polars as pl
 from scipy.optimize import root_scalar
 
 from bubbles.core import InvestorProvider, Market
-from bubbles.investors import weighted_avg_returns, weights_5_36
+from bubbles.investors import Extrapolator
 from bubbles.timeseries import TimeSeries
 
 SQRT_12 = np.sqrt(12)
@@ -183,9 +183,12 @@ def data_table(
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
         ts.annualized_earnings[t] = ts.annualize(mkt, t)
         ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * mkt.payout_ratio
-        ts.n_year_annualized_return[t] = weighted_avg_returns(ts.return_idx, weights_5_36(), t)
 
         for investor in investors:
+            if investor.investor_type() == "extrapolator":
+                ts.n_year_annualized_return[t] = investor.weighted_avg_returns(
+                    ts.return_idx, Extrapolator.weights_5_36(), t
+                )
             investor.cash_post_distribution()[t] = (
                 investor.cash()[t - 1]
                 + (ts.monthly_earnings[t] * mkt.payout_ratio)

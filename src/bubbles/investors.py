@@ -124,36 +124,6 @@ class InvestorBase:
 
 
 # TODO: Move to methods of Extrapolator
-def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
-    """Generate exponentially decaying weights for return calculations.
-
-    Args:
-        start_weight: Initial weight value
-        n: Number of weights to generate
-
-    Returns:
-        Normalized array of weights that sum to 1.0
-    """
-    ws = start_weight * np.power(0.75, np.arange(n))
-    return np.array(ws / ws.sum(), dtype=np.float64)
-
-
-def weighted_avg_returns(
-    return_idx: NDArray[np.float64], weights: NDArray[np.float64], t: int
-) -> np.float64:
-    """Calculate weighted average of historical returns.
-
-    Args:
-        return_idx: Array of return indices
-        weights: Array of weights for each historical period
-        t: Current time index
-
-    Returns:
-        Weighted average of returns over the specified period
-    """
-    indices = t - np.arange(len(weights) + 1) * 12 - 1
-    returns_slice = return_idx[indices]
-    return np.float64(np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1)))
 
 
 @dataclass
@@ -179,7 +149,7 @@ class Extrapolator(InvestorBase):
         return cls(
             params=InvestorParameters(percent),
             stats=InvestorStats.initialize(Market()),
-            weights=weights_5_36(),
+            weights=cls.weights_5_36(),
             speed_of_adjustment=0.1,
             squeeze_target=0.04,
             max_deviation=0.04,
@@ -188,6 +158,41 @@ class Extrapolator(InvestorBase):
 
     def investor_type(self) -> Literal["extrapolator"]:
         return "extrapolator"
+
+    @staticmethod
+    def weights_5_36(start_weight: float = 36.0, n: int = 5) -> NDArray[np.float64]:
+        """Generate exponentially decaying weights for return calculations.
+
+        Args:
+            start_weight: Initial weight value
+            n: Number of weights to generate
+
+        Returns:
+            Normalized array of weights that sum to 1.0
+        """
+        ws = start_weight * np.power(0.75, np.arange(n))
+        return np.array(ws / ws.sum(), dtype=np.float64)
+
+    def weighted_avg_returns(
+        self,
+        return_idx: NDArray[np.float64],
+        weights: NDArray[np.float64],
+        t: int,
+    ) -> np.float64:
+        """Calculate weighted average of historical returns.
+
+        Args:
+            return_idx: Array of return indices
+            weights: Array of weights for each historical period
+            t: Current time index
+
+        Returns:
+            Weighted average of returns over the specified period
+        """
+
+        indices = t - np.arange(len(weights) + 1) * 12 - 1
+        returns_slice = return_idx[indices]
+        return np.float64(np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1)))
 
     def calculate_expected_return(
         self,
