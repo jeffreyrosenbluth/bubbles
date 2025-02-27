@@ -39,7 +39,6 @@ def history_ts(
     ts.monthly_earnings[1] = (1 + mkt.initial_expected_return) ** (1 / 12) - 1
     reinvested = ts.monthly_earnings[1] * (1 - mkt.payout_ratio)
     ts.price_idx[1] = ts.price_idx[0] + reinvested
-    ts.annualized_earnings[1] = ts.annualize(mkt, 1)
     ts.return_idx[1] = ts.calculate_return_idx(mkt, 1)
 
     # Initialize `TimeSeries` for the `t = 2` to `t = history_months`
@@ -47,14 +46,12 @@ def history_ts(
         ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
         ts.price_idx[t] = ts.price_idx[t - 1] + reinvested
-        ts.annualized_earnings[t] = ts.annualize(mkt, t)
         ts.return_idx[t] = ts.calculate_return_idx(mkt, t)
 
-    ts.n_year_annualized_return[history_months] = (
-        ts.annualized_earnings[history_months] / ts.price_idx[history_months]
-    )
+    annualized_earnings = ts.annualize(mkt, t)
+    ts.n_year_annualized_return[history_months] = annualized_earnings / ts.price_idx[history_months]
 
-    current_return = ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+    current_return = annualized_earnings / ts.price_idx[history_months]
     total_percent_equity = sum(
         inv.percent() * inv.merton_share(current_return) for inv in ts.investors
     )
@@ -67,16 +64,13 @@ def history_ts(
         inv.wealth()[history_months] = inv.percent() * starting_wealth
         inv.equity()[history_months] = (
             inv.wealth()[history_months]
-            * ts.annualized_earnings[history_months]
+            * annualized_earnings
             / ts.price_idx[history_months]
             / (inv.gamma() * inv.sigma() ** 2)
         )
         inv.cash()[history_months] = inv.wealth()[history_months] - inv.equity()[history_months]
-        inv.expected_return()[history_months] = (
-            ts.annualized_earnings[history_months] / ts.price_idx[history_months]
-        )
+        inv.expected_return()[history_months] = annualized_earnings / ts.price_idx[history_months]
 
-    ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
     return ts
 
 
@@ -92,6 +86,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
         np.float64: Excess demand (positive means demand > supply)
     """
     total_demand = 0.0
+    annualized_earnings = ts.annualize(mkt, t)
     for investor in ts.investors:
         # Calculate desired equity position for each investor
         match investor.investor_type():
@@ -101,7 +96,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
                 )
             case "long_term":
                 desired_equity = investor.desired_equity(
-                    t, ts.annualized_earnings[t], ts.price_idx[t - 1], price
+                    t, annualized_earnings, ts.price_idx[t - 1], price
                 )
             case "rebalancer_60_40":
                 desired_equity = investor.desired_equity()
@@ -181,8 +176,7 @@ def data_table(
     for t in range(history_months + 1, months + 1):
         ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
-        ts.annualized_earnings[t] = ts.annualize(mkt, t)
-        ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * mkt.payout_ratio
+        annualized_earnings = ts.annualize(mkt, t)
 
         for investor in investors:
             if investor.investor_type() == "extrapolator":
@@ -219,7 +213,7 @@ def data_table(
                     )
                 case "long_term":
                     investor.expected_return()[t] = investor.calculate_expected_return(
-                        ts.annualized_earnings[t],
+                        annualized_earnings,
                         ts.price_idx[t],
                     )
                     investor.equity()[t] = (
@@ -233,7 +227,7 @@ def data_table(
 
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
-        fair_value = ts.annualized_earnings / mkt.initial_expected_return
+        fair_value = annualized_earnings / mkt.initial_expected_return
 
     # Create column names based on investor types
     investor_columns = {}
@@ -247,7 +241,7 @@ def data_table(
 
     return pl.DataFrame(
         {
-            "Month": list(range(len(ts.annualized_earnings))),
+            "Month": list(range(len(ts.monthly_earnings))),
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),

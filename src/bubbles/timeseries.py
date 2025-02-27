@@ -20,25 +20,17 @@ class TimeSeries:
     Attributes:
         monthly_earnings: Monthly earnings values
         price_idx: Price index over time
-        annualized_earnings: Annualized earnings
         return_idx: Return index
-        total_cash: Total cash in system
         investors: List of investors
         n_year_annualized_return: N-year annualized returns
-        a, b, c: Intermediate calculation values
         dz: Random shock values
     """
 
     monthly_earnings: NDArray[np.float64]
     price_idx: NDArray[np.float64]
-    annualized_earnings: NDArray[np.float64]
     return_idx: NDArray[np.float64]
-    total_cash: NDArray[np.float64]
     investors: list[InvestorProvider]
     n_year_annualized_return: NDArray[np.float64]
-    a: NDArray[np.float64]
-    b: NDArray[np.float64]
-    c: NDArray[np.float64]
     dz: NDArray[np.float64]
 
     @classmethod
@@ -57,14 +49,9 @@ class TimeSeries:
         return cls(
             monthly_earnings=np.full(n, np.nan, dtype=np.float64),
             price_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
-            annualized_earnings=np.full(n, np.nan, dtype=np.float64),
             return_idx=np.ones(n, dtype=np.float64),  # Initialize to ones
-            total_cash=np.full(n, np.nan, dtype=np.float64),
             investors=investors,  # Initialize with empty list
             n_year_annualized_return=np.full(n, np.nan, dtype=np.float64),
-            a=np.full(n, np.nan, dtype=np.float64),
-            b=np.full(n, np.nan, dtype=np.float64),
-            c=np.full(n, np.nan, dtype=np.float64),
             dz=dz_zero,
         )
 
@@ -121,15 +108,10 @@ class TimeSeries:
             Polars DataFrame with all TimeSeries arrays as columns
         """
         data = {
-            "annualized_earnings": self.annualized_earnings,
             "monthly_earnings": self.monthly_earnings,
             "return_idx": self.return_idx,
             "price_idx": self.price_idx,
-            "total_cash": self.total_cash,
             "n_year_annualized_return": self.n_year_annualized_return,
-            "a": self.a,
-            "b": self.b,
-            "c": self.c,
             "dz": self.dz,
         }
 
@@ -168,15 +150,8 @@ class TimeSeries:
             f"Market Data:\n"
             f"  monthly_earnings: {array_stats(self.monthly_earnings)}\n"
             f"  price_idx: {array_stats(self.price_idx)}\n"
-            f"  annualized_earnings: {array_stats(self.annualized_earnings)}\n"
             f"  return_idx: {array_stats(self.return_idx)}\n"
-            f"  total_cash: {array_stats(self.total_cash)}\n"
             f"  n_year_annualized_return: {array_stats(self.n_year_annualized_return)}\n\n"
-            f"Calculation Values:\n"
-            f"  a: {array_stats(self.a)}\n"
-            f"  b: {array_stats(self.b)}\n"
-            f"  c: {array_stats(self.c)}\n"
-            f"  dz: {array_stats(self.dz)}\n\n"
             f"Investors:\n"
             f"{investors_str}\n"
         )
