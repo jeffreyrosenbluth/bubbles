@@ -60,6 +60,8 @@ def history_ts(
 
     for investor in ts.investors:
         # Calculate investor positions
+        if investor.investor_type() == "extrapolator":
+            investor.expected_return = annualized_earnings / ts.price_idx[history_months]
         investor.wealth()[history_months] = investor.percent() * starting_wealth
         investor.equity()[history_months] = (
             investor.wealth()[history_months]
@@ -70,14 +72,10 @@ def history_ts(
         investor.cash()[history_months] = (
             investor.wealth()[history_months] - investor.equity()[history_months]
         )
-        investor.expected_return()[history_months] = (
-            annualized_earnings / ts.price_idx[history_months]
-        )
-
     return ts
 
 
-def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
+def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market, noise: float) -> float:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -106,7 +104,9 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
                 )
             case "rebalancer_60_40":
                 desired_equity = investor.desired_equity()
-            case _:  # Add this wildcard case
+            case "noise":
+                desired_equity = noise
+            case _:
                 raise ValueError(f"Unknown investor type: {investor.investor_type()}")
         total_demand += desired_equity
 
@@ -125,9 +125,10 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
         np.float64: Equilibrium price index
     """
     initial_guess = ts.price_idx[t - 1]
+    noise = np.random.uniform(0.4, 0.8)
 
     def objective(price: float) -> float:
-        return market_clearing_error(price, t, ts, mkt)
+        return market_clearing_error(price, t, ts, mkt, noise)
 
     result = root_scalar(
         objective,
@@ -189,6 +190,9 @@ def data_table(
                 n_year_annualized_return = investor.weighted_avg_returns(
                     ts.return_idx, Extrapolator.weights_5_36(), t
                 )
+                investor.expected_return = investor.calculate_expected_return(
+                    t, n_year_annualized_return, mkt
+                )
             investor.cash_post_distribution()[t] = (
                 investor.cash()[t - 1]
                 + (ts.monthly_earnings[t] * mkt.payout_ratio)
@@ -209,26 +213,21 @@ def data_table(
             )
             match investor.investor_type():
                 case "extrapolator":
-                    investor.expected_return()[t] = investor.calculate_expected_return(
-                        t, n_year_annualized_return, mkt
-                    )
                     investor.equity()[t] = (
                         investor.wealth()[t]
-                        * investor.expected_return()[t]
+                        * investor.expected_return
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "long_term":
-                    investor.expected_return()[t] = investor.calculate_expected_return(
-                        annualized_earnings,
-                        ts.price_idx[t],
-                    )
                     investor.equity()[t] = (
                         investor.wealth()[t]
-                        * investor.expected_return()[t]
+                        * investor.calculate_expected_return(
+                            annualized_earnings,
+                            ts.price_idx[t],
+                        )
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "rebalancer_60_40":
-                    investor.expected_return()[t] = investor.calculate_expected_return()
                     investor.equity()[t] = investor.wealth()[t] * investor.desired_equity()
 
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]

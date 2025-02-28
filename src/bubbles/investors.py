@@ -38,14 +38,12 @@ class InvestorStats:
 
     Attributes:
         wealth: Total wealth over time
-        expected_return: Expected returns over time
         equity: Equity holdings over time
         cash: Cash holdings over time
         cash_post_distribution: Cash position after distributions
     """
 
     wealth: NDArray[np.float64]
-    expected_return: NDArray[np.float64]
     equity: NDArray[np.float64]
     cash: NDArray[np.float64]
     cash_post_distribution: NDArray[np.float64]
@@ -63,7 +61,6 @@ class InvestorStats:
         n = 12 * (m.years + m.history_length) + 1
         return cls(
             wealth=np.full(n, np.nan, dtype=float),
-            expected_return=np.full(n, np.nan, dtype=float),
             equity=np.full(n, np.nan, dtype=float),
             cash=np.full(n, np.nan, dtype=float),
             cash_post_distribution=np.full(n, np.nan, dtype=float),
@@ -81,7 +78,6 @@ class InvestorStats:
             f"Investor Stats (length: {len(self.wealth)})\n"
             f"------------------------------------\n"
             f"  wealth: {array_stats(self.wealth)}\n"
-            f"  expected_return: {array_stats(self.expected_return)}\n"
             f"  equity: {array_stats(self.equity)}\n"
             f"  cash: {array_stats(self.cash)}\n"
             f"  cash_post_distribution: {array_stats(self.cash_post_distribution)}\n\n"
@@ -113,9 +109,6 @@ class InvestorBase:
     def cash(self) -> NDArray[np.float64]:
         return self.stats.cash
 
-    def expected_return(self) -> NDArray[np.float64]:
-        return self.stats.expected_return
-
     def cash_post_distribution(self) -> NDArray[np.float64]:
         return self.stats.cash_post_distribution
 
@@ -140,6 +133,7 @@ class Extrapolator(InvestorBase):
     squeeze_target: float
     max_deviation: float
     squeezing: float
+    expected_return: float
 
     @classmethod
     def new(cls, percent: float) -> "Extrapolator":
@@ -151,6 +145,7 @@ class Extrapolator(InvestorBase):
             squeeze_target=0.04,
             max_deviation=0.04,
             squeezing=0.1,
+            expected_return=0.0,
         )
 
     def investor_type(self) -> Literal["extrapolator"]:
@@ -200,10 +195,11 @@ class Extrapolator(InvestorBase):
         squeeze = self.squeeze_target + self.max_deviation * np.tanh(
             (n_year_annualized_return - mkt.initial_expected_return) / self.squeezing
         )
-        return float(
+        er = float(
             squeeze * self.speed_of_adjustment
-            + (1 - self.speed_of_adjustment) * self.expected_return()[t - 1]
+            + (1 - self.speed_of_adjustment) * self.expected_return
         )
+        return er
 
     def desired_equity(
         self,
@@ -213,12 +209,12 @@ class Extrapolator(InvestorBase):
         price_prev: np.float64,
         price_new: np.float64,
     ) -> np.float64:
-        er = self.calculate_expected_return(t, n_year_annualized_return, mkt)
-        return (
-            er
+        de = (
+            self.expected_return
             * (self.cash_post_distribution()[t] + price_new * self.equity()[t - 1] / price_prev)
             / (self.gamma() * self.sigma() ** 2)
         )
+        return de
 
     def __repr__(self) -> str:
         weights_str = np.array2string(self.weights, precision=3, separator=", ")
@@ -317,11 +313,27 @@ class Rebalancer_60_40(InvestorBase):
     def investor_type(self) -> Literal["rebalancer_60_40"]:
         return "rebalancer_60_40"
 
-    def calculate_expected_return(self) -> np.float64:
-        return 0.0
-
     def desired_equity(self) -> np.float64:
         return 0.6
 
     def __repr__(self) -> str:
         return f"Rebalancer_60_40\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
+
+
+@dataclass
+class NoiseInvestor(InvestorBase):
+    """An investor type that adds noise to the expected return."""
+
+    @classmethod
+    def new(cls, percent: float) -> "NoiseInvestor":
+        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
+
+    def investor_type(self) -> Literal["noise"]:
+        return "noise"
+
+    def desired_equity(self) -> np.float64:
+        print("The sky has fallen")
+        return 0.0
+
+    def __repr__(self) -> str:
+        return f"NoiseInvestor\n---------------\n{textwrap.indent(repr(self.params), '  ')}\n"
