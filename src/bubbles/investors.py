@@ -123,9 +123,6 @@ class InvestorBase:
         return excess_return / (self.gamma() * self.sigma() ** 2)
 
 
-# TODO: Move to methods of Extrapolator
-
-
 @dataclass
 class Extrapolator(InvestorBase):
     """An investor type that extrapolates returns from historical data.

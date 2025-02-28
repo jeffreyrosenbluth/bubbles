@@ -35,13 +35,13 @@ def history_ts(
     history_months = 12 * mkt.history_length
     ts = TimeSeries.initialize(mkt, investors)
 
-    # Initialize `TimeSeries` for the `t = 1`
+    # Initialize `TimeSeries` for `t = 1`
     ts.monthly_earnings[1] = (1 + mkt.initial_expected_return) ** (1 / 12) - 1
     reinvested = ts.monthly_earnings[1] * (1 - mkt.payout_ratio)
     ts.price_idx[1] = ts.price_idx[0] + reinvested
     ts.return_idx[1] = ts.calculate_return_idx(mkt, 1)
 
-    # Initialize `TimeSeries` for the `t = 2` to `t = history_months`
+    # Initialize `TimeSeries` for `t = 2` to `t = history_months`
     for t in range(2, history_months + 1):
         ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
@@ -58,17 +58,21 @@ def history_ts(
     # Calculate starting_wealth after we have the complete sum
     starting_wealth = ts.price_idx[history_months] / total_percent_equity
 
-    for inv in ts.investors:
+    for investor in ts.investors:
         # Calculate investor positions
-        inv.wealth()[history_months] = inv.percent() * starting_wealth
-        inv.equity()[history_months] = (
-            inv.wealth()[history_months]
+        investor.wealth()[history_months] = investor.percent() * starting_wealth
+        investor.equity()[history_months] = (
+            investor.wealth()[history_months]
             * annualized_earnings
             / ts.price_idx[history_months]
-            / (inv.gamma() * inv.sigma() ** 2)
+            / (investor.gamma() * investor.sigma() ** 2)
         )
-        inv.cash()[history_months] = inv.wealth()[history_months] - inv.equity()[history_months]
-        inv.expected_return()[history_months] = annualized_earnings / ts.price_idx[history_months]
+        investor.cash()[history_months] = (
+            investor.wealth()[history_months] - investor.equity()[history_months]
+        )
+        investor.expected_return()[history_months] = (
+            annualized_earnings / ts.price_idx[history_months]
+        )
 
     return ts
 
