@@ -35,26 +35,22 @@ def history_ts(
     history_months = 12 * mkt.history_length
     ts = TimeSeries.initialize(mkt, investors)
 
-    # Initialize `TimeSeries` for the `t = 1`
+    # Initialize `TimeSeries` for `t = 1`
     ts.monthly_earnings[1] = (1 + mkt.initial_expected_return) ** (1 / 12) - 1
     reinvested = ts.monthly_earnings[1] * (1 - mkt.payout_ratio)
     ts.price_idx[1] = ts.price_idx[0] + reinvested
-    ts.annualized_earnings[1] = ts.annualize(mkt, 1)
     ts.return_idx[1] = ts.calculate_return_idx(mkt, 1)
 
-    # Initialize `TimeSeries` for the `t = 2` to `t = history_months`
+    # Initialize `TimeSeries` for `t = 2` to `t = history_months`
     for t in range(2, history_months + 1):
         ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
         ts.price_idx[t] = ts.price_idx[t - 1] + reinvested
-        ts.annualized_earnings[t] = ts.annualize(mkt, t)
         ts.return_idx[t] = ts.calculate_return_idx(mkt, t)
 
-    ts.n_year_annualized_return[history_months] = (
-        ts.annualized_earnings[history_months] / ts.price_idx[history_months]
-    )
+    annualized_earnings = ts.annualize(mkt, history_months)
 
-    current_return = ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+    current_return = annualized_earnings / ts.price_idx[history_months]
     total_percent_equity = sum(
         inv.percent() * inv.merton_share(current_return) for inv in ts.investors
     )
@@ -62,25 +58,24 @@ def history_ts(
     # Calculate starting_wealth after we have the complete sum
     starting_wealth = ts.price_idx[history_months] / total_percent_equity
 
-    for inv in ts.investors:
+    for investor in ts.investors:
         # Calculate investor positions
-        inv.wealth()[history_months] = inv.percent() * starting_wealth
-        inv.equity()[history_months] = (
-            inv.wealth()[history_months]
-            * ts.annualized_earnings[history_months]
+        if investor.investor_type() == "extrapolator":
+            investor.expected_return = annualized_earnings / ts.price_idx[history_months]
+        investor.wealth()[history_months] = investor.percent() * starting_wealth
+        investor.equity()[history_months] = (
+            investor.wealth()[history_months]
+            * annualized_earnings
             / ts.price_idx[history_months]
-            / (inv.gamma() * inv.sigma() ** 2)
+            / (investor.gamma() * investor.sigma() ** 2)
         )
-        inv.cash()[history_months] = inv.wealth()[history_months] - inv.equity()[history_months]
-        inv.expected_return()[history_months] = (
-            ts.annualized_earnings[history_months] / ts.price_idx[history_months]
+        investor.cash()[history_months] = (
+            investor.wealth()[history_months] - investor.equity()[history_months]
         )
-
-    ts.total_cash[history_months] = starting_wealth - ts.price_idx[history_months]
     return ts
 
 
-def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> float:
+def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market, noise: float) -> float:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -92,20 +87,26 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market) -> 
         np.float64: Excess demand (positive means demand > supply)
     """
     total_demand = 0.0
+    annualized_earnings = ts.annualize(mkt, t)
     for investor in ts.investors:
         # Calculate desired equity position for each investor
         match investor.investor_type():
             case "extrapolator":
+                n_year_annualized_return = investor.weighted_avg_returns(
+                    ts.return_idx, Extrapolator.weights_5_36(), t
+                )
                 desired_equity = investor.desired_equity(
-                    t, ts.n_year_annualized_return[t], mkt, ts.price_idx[t - 1], price
+                    t, n_year_annualized_return, mkt, ts.price_idx[t - 1], price
                 )
             case "long_term":
                 desired_equity = investor.desired_equity(
-                    t, ts.annualized_earnings[t], ts.price_idx[t - 1], price
+                    t, annualized_earnings, ts.price_idx[t - 1], price
                 )
             case "rebalancer_60_40":
                 desired_equity = investor.desired_equity()
-            case _:  # Add this wildcard case
+            case "noise":
+                desired_equity = noise
+            case _:
                 raise ValueError(f"Unknown investor type: {investor.investor_type()}")
         total_demand += desired_equity
 
@@ -124,9 +125,10 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
         np.float64: Equilibrium price index
     """
     initial_guess = ts.price_idx[t - 1]
+    noise = np.random.uniform(0.4, 0.8)
 
     def objective(price: float) -> float:
-        return market_clearing_error(price, t, ts, mkt)
+        return market_clearing_error(price, t, ts, mkt, noise)
 
     result = root_scalar(
         objective,
@@ -181,13 +183,15 @@ def data_table(
     for t in range(history_months + 1, months + 1):
         ts.monthly_earnings[t] = ts.earnings(mkt, reinvested, t)
         reinvested = ts.monthly_earnings[t] * (1 - mkt.payout_ratio)
-        ts.annualized_earnings[t] = ts.annualize(mkt, t)
-        ts.total_cash[t] = ts.total_cash[t - 1] + ts.monthly_earnings[t] * mkt.payout_ratio
+        annualized_earnings = ts.annualize(mkt, t)
 
         for investor in investors:
             if investor.investor_type() == "extrapolator":
-                ts.n_year_annualized_return[t] = investor.weighted_avg_returns(
+                n_year_annualized_return = investor.weighted_avg_returns(
                     ts.return_idx, Extrapolator.weights_5_36(), t
+                )
+                investor.expected_return = investor.calculate_expected_return(
+                    t, n_year_annualized_return, mkt
                 )
             investor.cash_post_distribution()[t] = (
                 investor.cash()[t - 1]
@@ -209,31 +213,26 @@ def data_table(
             )
             match investor.investor_type():
                 case "extrapolator":
-                    investor.expected_return()[t] = investor.calculate_expected_return(
-                        t, ts.n_year_annualized_return[t], mkt
-                    )
                     investor.equity()[t] = (
                         investor.wealth()[t]
-                        * investor.expected_return()[t]
+                        * investor.expected_return
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "long_term":
-                    investor.expected_return()[t] = investor.calculate_expected_return(
-                        ts.annualized_earnings[t],
-                        ts.price_idx[t],
-                    )
                     investor.equity()[t] = (
                         investor.wealth()[t]
-                        * investor.expected_return()[t]
+                        * investor.calculate_expected_return(
+                            annualized_earnings,
+                            ts.price_idx[t],
+                        )
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "rebalancer_60_40":
-                    investor.expected_return()[t] = investor.calculate_expected_return()
                     investor.equity()[t] = investor.wealth()[t] * investor.desired_equity()
 
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
-        fair_value = ts.annualized_earnings / mkt.initial_expected_return
+        fair_value = annualized_earnings / mkt.initial_expected_return
 
     # Create column names based on investor types
     investor_columns = {}
@@ -247,7 +246,7 @@ def data_table(
 
     return pl.DataFrame(
         {
-            "Month": list(range(len(ts.annualized_earnings))),
+            "Month": list(range(len(ts.monthly_earnings))),
             "Return Idx": ts.return_idx,
             "Price Idx": ts.price_idx,
             "Premium": np.log(ts.price_idx / fair_value),
