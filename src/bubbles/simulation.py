@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 from scipy.optimize import root_scalar
 
-from bubbles.core import InvestorProvider, Market
+from bubbles.core import InvestorProvider, Simulation
 from bubbles.investors import Extrapolator
 from bubbles.timeseries import TimeSeries
 
@@ -14,7 +14,7 @@ SQRT_12 = np.sqrt(12)
 
 
 def history_ts(
-    mkt: Market,
+    mkt: Simulation,
     investors: list[InvestorProvider],
 ) -> TimeSeries:
     """Generate historical time series data for market initialization.
@@ -30,7 +30,9 @@ def history_ts(
         TimeSeries: Historical market data and investor positions
     """
     total_percent = sum(inv.percent() for inv in investors)
-    assert np.isclose(total_percent, 1.0), f"Total percent must be 1.0, got {total_percent}"
+    assert np.isclose(
+        total_percent, 1.0
+    ), f"Total percent must be 1.0, got {total_percent}"
 
     history_months = 12 * mkt.history_length
     ts = TimeSeries.initialize(mkt, investors)
@@ -61,7 +63,9 @@ def history_ts(
     for investor in ts.investors:
         # Calculate investor positions
         if investor.investor_type() == "extrapolator":
-            investor.expected_return = annualized_earnings / ts.price_idx[history_months]
+            investor.expected_return = (
+                annualized_earnings / ts.price_idx[history_months]
+            )
         investor.wealth()[history_months] = investor.percent() * starting_wealth
         investor.equity()[history_months] = (
             investor.wealth()[history_months]
@@ -75,7 +79,9 @@ def history_ts(
     return ts
 
 
-def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market, noise: float) -> float:
+def market_clearing_error(
+    price: float, t: int, ts: TimeSeries, mkt: Simulation, noise: float
+) -> float:
     """Calculate the excess demand at a given price.
 
     Args:
@@ -113,7 +119,7 @@ def market_clearing_error(price: float, t: int, ts: TimeSeries, mkt: Market, noi
     return total_demand - price  # Supply is just the price
 
 
-def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
+def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Simulation) -> float:
     """Find the equilibrium price using numerical root finding.
 
     Args:
@@ -145,7 +151,7 @@ def find_equilibrium_price(t: int, ts: TimeSeries, mkt: Market) -> float:
 
 
 def data_table(
-    mkt: Market,
+    mkt: Simulation,
     investors: list[InvestorProvider],
 ) -> pl.DataFrame:
     """Simulate market dynamics and return results as a DataFrame.
@@ -203,7 +209,8 @@ def data_table(
         ts.price_idx[t] = find_equilibrium_price(t, ts, mkt)
 
         ts.return_idx[t] = ts.return_idx[t - 1] * (
-            (ts.price_idx[t] + ts.monthly_earnings[t] * mkt.payout_ratio) / ts.price_idx[t - 1]
+            (ts.price_idx[t] + ts.monthly_earnings[t] * mkt.payout_ratio)
+            / ts.price_idx[t - 1]
         )
 
         for investor in investors:
@@ -228,11 +235,14 @@ def data_table(
                         / (investor.gamma() * investor.sigma() ** 2)
                     )
                 case "rebalancer_60_40":
-                    investor.equity()[t] = investor.wealth()[t] * investor.desired_equity()
+                    investor.equity()[t] = (
+                        investor.wealth()[t] * investor.desired_equity()
+                    )
 
             investor.cash()[t] = investor.wealth()[t] - investor.equity()[t]
 
-        fair_value = annualized_earnings / mkt.initial_expected_return
+        ae = np.array([ts.annualize(mkt, t) for t in range(months + 1)])
+        fair_value = ae / mkt.initial_expected_return
 
     # Create column names based on investor types
     investor_columns = {}

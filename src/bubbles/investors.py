@@ -5,7 +5,7 @@ from typing import Literal
 import numpy as np
 from numpy.typing import NDArray
 
-from bubbles.core import Market
+from bubbles.core import Simulation
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class InvestorStats:
     cash_post_distribution: NDArray[np.float64]
 
     @classmethod
-    def initialize(cls, m: Market) -> "InvestorStats":
+    def initialize(cls, m: Simulation) -> "InvestorStats":
         """Create a new InvestorStats instance with arrays initialized to NaN.
 
         Args:
@@ -72,7 +72,9 @@ class InvestorStats:
             if not np.any(valid):
                 return "no valid data"
             data = arr[valid]
-            return f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+            return (
+                f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+            )
 
         return (
             f"Investor Stats (length: {len(self.wealth)})\n"
@@ -139,7 +141,7 @@ class Extrapolator(InvestorBase):
     def new(cls, percent: float) -> "Extrapolator":
         return cls(
             params=InvestorParameters(percent),
-            stats=InvestorStats.initialize(Market()),
+            stats=InvestorStats.initialize(Simulation()),
             weights=cls.weights_5_36(),
             speed_of_adjustment=0.1,
             squeeze_target=0.04,
@@ -184,13 +186,15 @@ class Extrapolator(InvestorBase):
 
         indices = t - np.arange(len(weights) + 1) * 12 - 1
         returns_slice = return_idx[indices]
-        return np.float64(np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1)))
+        return np.float64(
+            np.sum(weights * (returns_slice[:-1] / returns_slice[1:] - 1))
+        )
 
     def calculate_expected_return(
         self,
         t: int,
         n_year_annualized_return: float,
-        mkt: Market,
+        mkt: Simulation,
     ) -> float:
         squeeze = self.squeeze_target + self.max_deviation * np.tanh(
             (n_year_annualized_return - mkt.initial_expected_return) / self.squeezing
@@ -205,13 +209,16 @@ class Extrapolator(InvestorBase):
         self,
         t: int,
         n_year_annualized_return: np.float64,
-        mkt: Market,
+        mkt: Simulation,
         price_prev: np.float64,
         price_new: np.float64,
     ) -> np.float64:
         de = (
             self.expected_return
-            * (self.cash_post_distribution()[t] + price_new * self.equity()[t - 1] / price_prev)
+            * (
+                self.cash_post_distribution()[t]
+                + price_new * self.equity()[t - 1] / price_prev
+            )
             / (self.gamma() * self.sigma() ** 2)
         )
         return de
@@ -255,7 +262,10 @@ class LongTermInvestor(InvestorBase):
 
     @classmethod
     def new(cls, percent: float) -> "LongTermInvestor":
-        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
+        return cls(
+            params=InvestorParameters(percent),
+            stats=InvestorStats.initialize(Simulation()),
+        )
 
     def investor_type(self) -> Literal["long_term"]:
         return "long_term"
@@ -277,7 +287,10 @@ class LongTermInvestor(InvestorBase):
         er = self.calculate_expected_return(annualized_earnings, price_new)
         return (
             er
-            * (self.cash_post_distribution()[t] + price_new * self.equity()[t - 1] / price_prev)
+            * (
+                self.cash_post_distribution()[t]
+                + price_new * self.equity()[t - 1] / price_prev
+            )
             / (self.gamma() * self.sigma() ** 2)
         )
 
@@ -308,7 +321,10 @@ class Rebalancer_60_40(InvestorBase):
 
     @classmethod
     def new(cls, percent: float) -> "Rebalancer_60_40":
-        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
+        return cls(
+            params=InvestorParameters(percent),
+            stats=InvestorStats.initialize(Simulation()),
+        )
 
     def investor_type(self) -> Literal["rebalancer_60_40"]:
         return "rebalancer_60_40"
@@ -326,7 +342,10 @@ class NoiseInvestor(InvestorBase):
 
     @classmethod
     def new(cls, percent: float) -> "NoiseInvestor":
-        return cls(params=InvestorParameters(percent), stats=InvestorStats.initialize(Market()))
+        return cls(
+            params=InvestorParameters(percent),
+            stats=InvestorStats.initialize(Simulation()),
+        )
 
     def investor_type(self) -> Literal["noise"]:
         return "noise"

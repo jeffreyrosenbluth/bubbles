@@ -1,4 +1,4 @@
-from bubbles.agents import wealth
+from bubbles.simulation import wealth
 
 
 def test_wealth():

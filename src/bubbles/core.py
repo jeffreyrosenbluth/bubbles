@@ -38,7 +38,7 @@ class InvestorProvider(Protocol):
 
 
 @dataclass(frozen=True)
-class Market:
+class Simulation:
     """Global parameters for market simulation.
 
     Attributes:

@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 from numpy.typing import NDArray
 
-from bubbles.core import InvestorProvider, Market
+from bubbles.core import InvestorProvider, Simulation
 from bubbles.dz import dz
 
 SQRT_12 = np.sqrt(12)
@@ -32,7 +32,9 @@ class TimeSeries:
     dz: NDArray[np.float64]
 
     @classmethod
-    def initialize(cls, mkt: Market, investors: list[InvestorProvider]) -> "TimeSeries":
+    def initialize(
+        cls, mkt: Simulation, investors: list[InvestorProvider]
+    ) -> "TimeSeries":
         """Create a new TimeSeries instance with initialized arrays.
 
         Args:
@@ -52,7 +54,7 @@ class TimeSeries:
             dz=dz_zero,
         )
 
-    def earnings(self, mkt: Market, reinvested: np.float64, t: int) -> np.float64:
+    def earnings(self, mkt: Simulation, reinvested: np.float64, t: int) -> np.float64:
         """Calculate earnings for the current period.
 
         Args:
@@ -69,7 +71,7 @@ class TimeSeries:
             * (1 + self.dz[t] * mkt.earnings_vol / SQRT_12)
         )
 
-    def annualize(self, mkt: Market, t: int) -> np.float64:
+    def annualize(self, mkt: Simulation, t: int) -> np.float64:
         """Convert monthly earnings to annualized value.
 
         Args:
@@ -79,11 +81,11 @@ class TimeSeries:
         Returns:
             Annualized earnings value
         """
-        return ((1 + self.monthly_earnings[t] / self.price_idx[t - 1]) ** 12 - 1) * self.price_idx[
-            t - 1
-        ]
+        return (
+            (1 + self.monthly_earnings[t] / self.price_idx[t - 1]) ** 12 - 1
+        ) * self.price_idx[t - 1]
 
-    def calculate_return_idx(self, mkt: Market, t: int) -> np.float64:
+    def calculate_return_idx(self, mkt: Simulation, t: int) -> np.float64:
         """Calculate return index including both price changes and dividends.
 
         Args:
@@ -132,7 +134,9 @@ class TimeSeries:
             if not np.any(valid):
                 return "no valid data"
             data = arr[valid]
-            return f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+            return (
+                f"mean: {data.mean():.2f}, min: {data.min():.2f}, max: {data.max():.2f}"
+            )
 
         n = len(self.price_idx)
         investors_str = "\n".join(

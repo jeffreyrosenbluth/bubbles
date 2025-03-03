@@ -1,0 +1,2 @@
+# Exclude by pattern
+*.ipynb -diff

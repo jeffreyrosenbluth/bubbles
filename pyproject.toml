@@ -11,20 +11,16 @@ dependencies = [
     "altair>=5.5.0",
     "itables>=2.2.5",
     "numpy>=2.2.3",
-    "polars>=1.23.0",
+    "polars>=1.24.0",
     "scipy>=1.15.2",
 ]
 
 [project.scripts]
 bubbles = "bubbles:main"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [dependency-groups]
 dev = [
-    "pytest>=8.3.4",
+    "pytest>=8.3.5",
     "pandas-stubs",
 ]
 lint = [
@@ -34,6 +30,9 @@ lint = [
 [tool.ruff]
 # Other ruff settings might be here...
 target-version = "py313"
+ignore = [
+    "F403", "F405"
+]
 
 [tool.mypy]
 python_version = "3.13"
